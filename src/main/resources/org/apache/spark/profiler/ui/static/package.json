@@ -1,0 +1,6 @@
+{
+  "name": "spark-profiler-ui",
+  "license": "Apache License 2.0",
+  "type": "module",
+  "private": true
+}
