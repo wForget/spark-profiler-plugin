@@ -394,6 +394,9 @@ export function initializeProfiler(root) {
     function add(name, label, entries, multiple = false, plural = label.toLowerCase()) {
       if (fields && !fields.has(name)) return;
       const selected = params.getAll(name);
+      if (!params.has(name) && data.selection?.[name] !== undefined) {
+        selected.push(data.selection[name]);
+      }
       if (name === "executor" && !selected.some(Boolean)) selected.push("driver");
       const container = createSelect(name, label, plural, entries, selected, multiple);
       const previous = form.elements.namedItem(name)?.closest(".profiler-select");

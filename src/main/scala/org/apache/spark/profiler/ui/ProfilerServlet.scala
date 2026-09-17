@@ -52,8 +52,14 @@ private[profiler] class ProfilerServlet(
     response.setHeader("Cache-Control", "no-store")
     val result = try {
       request.getPathInfo match {
-        case "/filters" => filters(ProfilerFilter.fromRequest(request))
-        case "/flamegraph" => flamegraph(ProfilerFilter.fromRequest(request))
+        case endpoint @ ("/filters" | "/flamegraph") =>
+          val profilerJobs = jobs()
+          val filter = ProfilerFilter.fromRequest(request, profilerJobs)
+          if (endpoint == "/filters") {
+            filters(filter, profilerJobs)
+          } else {
+            flamegraph(filter, profilerJobs)
+          }
         case _ =>
           response.setStatus(HttpServletResponse.SC_NOT_FOUND)
           compact(render(("error" -> "Unknown profiler endpoint"): JValue))
@@ -75,12 +81,14 @@ private[profiler] class ProfilerServlet(
     response.sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED)
   }
 
-  private def filters(filter: ProfilerFilter): String = {
-    val index = store.load(filter, jobs(), renderGraph = false).index
+  private def filters(filter: ProfilerFilter, profilerJobs: Seq[ProfilerJob]): String = {
+    val index = store.load(filter, profilerJobs, renderGraph = false).index
     val executors = index.threads.filter(_.sampleType == filter.sampleType)
       .map(_.executorId).filterNot(_ == SparkContext.DRIVER_IDENTIFIER).distinct.sorted
     val stages = index.stageSpans(filter).map(s => (s.stageId, s.stageAttempt)).distinct.sorted
     val options: JValue =
+      ("selection" -> (("sqlExecution" -> filter.sqlExecution.map(_.toString).getOrElse("")) ~
+        ("job" -> filter.job.map(_.toString).getOrElse("")))) ~
       ("executors" -> (SparkContext.DRIVER_IDENTIFIER +: executors)) ~
       ("threads" -> index.threadOptions(filter).map { t =>
         ("id" -> t.id) ~ ("name" -> t.name) ~
@@ -100,7 +108,7 @@ private[profiler] class ProfilerServlet(
     compact(render(options))
   }
 
-  private def flamegraph(filter: ProfilerFilter): String = {
-    store.load(filter, jobs(), renderGraph = true).graph.get.toJsonString
+  private def flamegraph(filter: ProfilerFilter, profilerJobs: Seq[ProfilerJob]): String = {
+    store.load(filter, profilerJobs, renderGraph = true).graph.get.toJsonString
   }
 }

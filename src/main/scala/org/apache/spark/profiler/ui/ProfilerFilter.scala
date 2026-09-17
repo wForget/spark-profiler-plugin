@@ -94,7 +94,7 @@ private[profiler] case class ProfilerFilter(
 }
 
 private[profiler] object ProfilerFilter {
-  def fromRequest(request: HttpServletRequest): ProfilerFilter = {
+  def fromRequest(request: HttpServletRequest, jobs: Seq[ProfilerJob]): ProfilerFilter = {
     def values(name: String): Seq[String] = {
       Option(request.getParameterValues(name)).toSeq.flatMap(_.toSeq).filter(_.nonEmpty)
     }
@@ -107,13 +107,32 @@ private[profiler] object ProfilerFilter {
     val executor = single("executor").orElse {
       Option.when(mode == "executor")(SparkContext.DRIVER_IDENTIFIER)
     }
+    val sqlExecution = single("sqlExecution").map(_.toLong)
+    val job = single("job").map(_.toInt)
+    val defaultJob = if (mode == "task") {
+      jobs.filter(j => job.forall(_ == j.jobId) &&
+        sqlExecution.forall(id => j.sqlExecutionId.contains(id))).minByOption(_.jobId)
+    } else {
+      None
+    }
+    // An explicit empty parameter means All, so only default omitted parameters.
+    val executionSelection = if (request.getParameterValues("sqlExecution") == null) {
+      defaultJob.flatMap(_.sqlExecutionId)
+    } else {
+      sqlExecution
+    }
+    val jobSelection = if (request.getParameterValues("job") == null) {
+      defaultJob.map(_.jobId)
+    } else {
+      job
+    }
     ProfilerFilter(
       mode = mode,
       sampleType = single("sampleType").getOrElse("wall"),
       executor = executor,
       threads = values("thread").toSet,
-      sqlExecution = single("sqlExecution").map(_.toLong),
-      job = single("job").map(_.toInt),
+      sqlExecution = executionSelection,
+      job = jobSelection,
       stage = single("stage"),
       tasks = values("task").toSet)
   }
