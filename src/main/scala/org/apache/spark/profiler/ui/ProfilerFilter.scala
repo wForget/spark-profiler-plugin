@@ -27,7 +27,6 @@ private[profiler] case class ProfilerThread(
     executorId: String,
     threadId: Int,
     name: String,
-    sampleType: String,
     startTime: Long,
     endTime: Long) {
   def id: String = s"$executorId:$threadId"
@@ -155,8 +154,8 @@ private[profiler] case class ProfilerIndex(
     jobs: Seq[ProfilerJob]) {
 
   def threadOptions(filter: ProfilerFilter): Seq[ProfilerThread] = {
-    threads.filter(t => t.sampleType == filter.sampleType &&
-      filter.executor.forall(_ == t.executorId)).distinct.sortBy(t => (t.executorId, t.threadId))
+    threads.filter(t => filter.executor.forall(_ == t.executorId))
+      .distinct.sortBy(t => (t.executorId, t.threadId))
   }
 
   def timeRange(filter: ProfilerFilter): Option[(Long, Long)] = {
@@ -166,8 +165,8 @@ private[profiler] case class ProfilerIndex(
     }
   }
 
-  private def sampledSpans(filter: ProfilerFilter): Seq[TaskSpan] = {
-    val sampledThreads = threads.filter(_.sampleType == filter.sampleType).map(_.id).toSet
+  private lazy val sampledSpans: Seq[TaskSpan] = {
+    val sampledThreads = threads.map(_.id).toSet
     spans.filter(s => sampledThreads.contains(s"${s.executorId}:${s.threadId}"))
   }
 
@@ -176,7 +175,7 @@ private[profiler] case class ProfilerIndex(
   }
 
   def jobOptions(filter: ProfilerFilter): Seq[ProfilerJob] = {
-    val stageIds = sampledSpans(filter).map(_.stageId).toSet
+    val stageIds = sampledSpans.map(_.stageId).toSet
     jobs.filter(j => j.stageIds.exists(stageIds.contains) &&
       filter.sqlExecution.forall(id => j.sqlExecutionId.contains(id)))
       .sortBy(_.jobId)
@@ -186,7 +185,7 @@ private[profiler] case class ProfilerIndex(
     val matchingJobs = jobOptions(filter).filter(j => filter.job.forall(_ == j.jobId))
     val stageIds = matchingJobs.flatMap(_.stageIds).toSet
     val restrictJobs = filter.sqlExecution.isDefined || filter.job.isDefined
-    sampledSpans(filter).filter(s => !restrictJobs || stageIds.contains(s.stageId))
+    sampledSpans.filter(s => !restrictJobs || stageIds.contains(s.stageId))
   }
 
   def taskOptions(filter: ProfilerFilter): Seq[TaskSpan] = {
@@ -202,10 +201,9 @@ private[profiler] case class ProfilerIndex(
 
   def validate(filter: ProfilerFilter): Unit = {
     if (filter.mode == "executor") {
-      // Keep the default driver selectable even when it has no samples of the requested type.
+      // Keep the default driver selectable even when it has no samples.
       require(filter.executor.forall(id => id == SparkContext.DRIVER_IDENTIFIER ||
-        threads.exists(t => t.executorId == id && t.sampleType == filter.sampleType)),
-        "Unknown executor for this sample type")
+        threads.exists(_.executorId == id)), "Unknown executor")
       require(filter.threads.subsetOf(threadOptions(filter).map(_.id).toSet),
         "Unknown thread or thread outside the selected executor")
     } else {

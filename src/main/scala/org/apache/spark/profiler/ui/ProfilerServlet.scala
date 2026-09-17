@@ -83,8 +83,8 @@ private[profiler] class ProfilerServlet(
 
   private def filters(filter: ProfilerFilter, profilerJobs: Seq[ProfilerJob]): String = {
     val index = store.load(filter, profilerJobs, renderGraph = false).index
-    val executors = index.threads.filter(_.sampleType == filter.sampleType)
-      .map(_.executorId).filterNot(_ == SparkContext.DRIVER_IDENTIFIER).distinct.sorted
+    val executors = index.threads.map(_.executorId)
+      .filterNot(_ == SparkContext.DRIVER_IDENTIFIER).distinct.sorted
     val stages = index.stageSpans(filter).map(s => (s.stageId, s.stageAttempt)).distinct.sorted
     val options: JValue =
       ("selection" -> (("sqlExecution" -> filter.sqlExecution.map(_.toString).getOrElse("")) ~

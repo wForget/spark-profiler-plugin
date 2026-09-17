@@ -95,7 +95,7 @@ private[profiler] object JfrConvertor {
   }
 
   def scan(file: File, executorId: String): (Seq[ProfilerThread], Seq[TaskSpan]) = {
-    val threads = new scala.collection.mutable.HashMap[(Int, String), ProfilerThread]
+    val threads = new scala.collection.mutable.HashMap[Int, ProfilerThread]
     val spans = new ArrayBuffer[TaskSpan]
     Utils.tryWithResource(new JfrReader(file.getAbsolutePath)) { reader =>
       reader.stopAtNewChunk = true
@@ -107,13 +107,12 @@ private[profiler] object JfrConvertor {
                 if sample.threadState != ExecutionSample.CPU_TIME_SAMPLE =>
               val state = reader.getEnumValue("jdk.types.ThreadState", sample.threadState)
               if (state != null) {
-                val sampleType = if (state == "STATE_DEFAULT") "cpu" else "wall"
                 val name = Option(reader.threads.get(sample.tid))
                   .getOrElse(s"Thread ${sample.tid}")
                 val time = reader.eventTimeToNanos(sample.time) / 1000000L
-                val previous = threads.get((sample.tid, sampleType))
-                threads((sample.tid, sampleType)) =
-                  ProfilerThread(executorId, sample.tid, name, sampleType,
+                val previous = threads.get(sample.tid)
+                threads(sample.tid) =
+                  ProfilerThread(executorId, sample.tid, name,
                     previous.fold(time)(t => math.min(t.startTime, time)),
                     previous.fold(time + 1)(t => math.max(t.endTime, time + 1)))
               }

@@ -293,7 +293,6 @@ function createSelect(name, label, plural, options, selected, multiple = false, 
 }
 
 const children = {
-  sampleType: ["executor", "thread", "startTime", "endTime", "sqlExecution", "job", "stage", "task"],
   executor: ["thread", "startTime", "endTime"],
   sqlExecution: ["job", "stage", "task"],
   job: ["stage", "task"],
