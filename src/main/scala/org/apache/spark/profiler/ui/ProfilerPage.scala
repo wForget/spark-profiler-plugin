@@ -30,20 +30,33 @@ private[profiler] class ProfilerPage(parent: ProfilerTab) extends WebUIPage("") 
     val pagePath = prependBaseUri(request, parent.basePath + "/profiler/")
     val content =
       <div id="profiler" data-api-base={pagePath + "api/"}>
-        <nav class="nav nav-underline border-bottom gap-4 mb-4" aria-label="Profiling mode">
-          <a class="nav-link fw-medium" data-mode="executor"
-              href={pagePath + "?mode=executor"}>Executor / Thread</a>
-          <a class="nav-link fw-medium" data-mode="task"
-              href={pagePath + "?mode=task"}>SQL / Task</a>
-        </nav>
+        <div class="d-flex align-items-center justify-content-between flex-wrap
+            gap-3 border-bottom mb-3">
+          <nav class="nav nav-underline gap-4" aria-label="Profiling mode">
+            <a class="nav-link fw-medium" data-mode="executor"
+                href={pagePath + "?mode=executor"}>Executor / Thread</a>
+            <a class="nav-link fw-medium" data-mode="task"
+                href={pagePath + "?mode=task"}>SQL / Task</a>
+          </nav>
+          <div id="profiler-sample-type" class="d-flex align-items-center gap-2 py-2">
+            <span id="profiler-sample-type-label" class="text-body-secondary">Sample type</span>
+            <div class="btn-group btn-group-sm" role="group"
+                aria-labelledby="profiler-sample-type-label">
+              <input id="profiler-sample-wall" type="radio" class="btn-check"
+                  name="sampleType" value="wall" form="profiler-filters" disabled="disabled"/>
+              <label class="btn btn-outline-primary" for="profiler-sample-wall">Wall</label>
+              <input id="profiler-sample-cpu" type="radio" class="btn-check"
+                  name="sampleType" value="cpu" form="profiler-filters" disabled="disabled"/>
+              <label class="btn btn-outline-primary" for="profiler-sample-cpu">CPU</label>
+            </div>
+          </div>
+        </div>
         <div id="profiler-error" class="alert alert-warning d-none" role="alert"></div>
         <div id="profiler-loading" role="status" class="text-body-secondary">
           Loading filters...
         </div>
         <form id="profiler-filters" action={pagePath}>
           <input type="hidden" name="mode" value="executor"/>
-          <div id="profiler-sample-type"
-              class="d-flex align-items-center flex-wrap gap-3 border-bottom pb-3 mb-3"></div>
           <div id="profiler-hierarchy" class="text-body-secondary mb-3"></div>
           <div id="profiler-options" class="row">
             <div class="col-md-3 mb-3 d-none">

@@ -210,10 +210,9 @@ export function initializeSelect(container) {
 }
 
 // The backend returns data only; all controls and labels are rendered here.
-function createSelect(name, label, plural, options, selected, multiple = false, compact = false) {
+function createSelect(name, label, plural, options, selected, multiple = false) {
   const container = document.createElement("div");
-  container.className = (compact ? "d-flex align-items-center gap-3" : "col-md-3 mb-3") +
-    " profiler-select";
+  container.className = "col-md-3 mb-3 profiler-select";
   container.dataset.plural = plural;
   // This template is static. API values are inserted using textContent and option properties.
   container.innerHTML = `
@@ -311,6 +310,7 @@ export function initializeProfiler(root) {
   let filtersReady = false;
   const pendingFields = new Set();
   const timeInputs = [find("start-time"), find("end-time")];
+  const sampleInputs = find("sample-type").querySelectorAll("input[name=sampleType]");
 
   function formParams() {
     const params = new URLSearchParams(new FormData(form));
@@ -418,10 +418,10 @@ export function initializeProfiler(root) {
     });
     const option = (value, label = value) => ({value, label});
     if (!fields) {
-      const sample = createSelect("sampleType", "Sample type", "sample type",
-        [option("wall", "Wall"), option("cpu", "CPU")], [sampleType], false, true);
-      find("sample-type").replaceChildren(sample);
-      initializeSelect(sample);
+      sampleInputs.forEach(input => {
+        input.checked = input.value === sampleType;
+        input.disabled = false;
+      });
     }
     const options = find("options");
     if (!fields) options.querySelectorAll(".profiler-select").forEach(node => node.remove());
@@ -522,6 +522,7 @@ export function initializeProfiler(root) {
       }
     } else {
       pendingFields.clear();
+      sampleInputs.forEach(input => { input.disabled = true; });
     }
     const fields = descendants ? new Set(pendingFields) : null;
     filtersReady = false;
@@ -534,6 +535,10 @@ export function initializeProfiler(root) {
     }
   }
 
+  find("sample-type").addEventListener("change", () => {
+    if (filtersReady) cancelRequest();
+    clearGraph();
+  });
   form.addEventListener("change", event => {
     if (event.target.tagName !== "SELECT" || event.target.disabled) return;
     if (!filtersReady && !children[event.target.name]) return;
