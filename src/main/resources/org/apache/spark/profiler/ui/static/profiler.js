@@ -490,6 +490,7 @@ export function initializeProfiler(root) {
     chart = flamegraph()
       .width(container.clientWidth)
       .cellHeight(18)
+      .inverted(true)
       .sort(true)
       .setLabelHandler(node => {
         const label = document.createElement("span");
