@@ -293,8 +293,8 @@ function createSelect(name, label, plural, options, selected, multiple = false, 
 }
 
 const children = {
-  sampleType: ["executor", "thread", "sqlExecution", "job", "stage", "task"],
-  executor: ["thread"],
+  sampleType: ["executor", "thread", "startTime", "endTime", "sqlExecution", "job", "stage", "task"],
+  executor: ["thread", "startTime", "endTime"],
   sqlExecution: ["job", "stage", "task"],
   job: ["stage", "task"],
   stage: ["task"]
@@ -311,6 +311,24 @@ export function initializeProfiler(root) {
   let chart;
   let filtersReady = false;
   const pendingFields = new Set();
+  const timeInputs = [find("start-time"), find("end-time")];
+
+  function formParams() {
+    const params = new URLSearchParams(new FormData(form));
+    for (const input of timeInputs) {
+      if (!input.disabled && input.value) {
+        params.set(input.name, new Date(input.value).getTime().toString());
+      }
+    }
+    return params;
+  }
+
+  function validateTimeRange() {
+    const [start, end] = timeInputs;
+    const reversed = start.value && end.value &&
+      new Date(start.value).getTime() >= new Date(end.value).getTime();
+    end.setCustomValidity(reversed ? "End time must be after start time." : "");
+  }
 
   function clearGraph() {
     chart = undefined;
@@ -373,6 +391,23 @@ export function initializeProfiler(root) {
     }
     const mode = params.get("mode") || "executor";
     const sampleType = params.get("sampleType") || "wall";
+    if (!fields || fields.has("startTime") || fields.has("endTime")) {
+      find("time-help").classList.toggle("d-none", mode !== "executor");
+      for (const input of timeInputs) {
+        input.parentElement.classList.toggle("d-none", mode !== "executor");
+        input.disabled = mode !== "executor";
+        const value = params.has(input.name) ? params.get(input.name) : data.timeRange?.[input.name];
+        const date = value !== undefined && value !== null && value !== "" ?
+          new Date(Number(value)) : null;
+        input.value = date && Number.isFinite(date.getTime()) ?
+          new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+            .toISOString().slice(0, 23) : "";
+      }
+      validateTimeRange();
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      find("time-help").textContent = `Times use your browser's local timezone (${timezone}). ` +
+        "Defaults cover the selected executor's samples. Clear either endpoint for no limit.";
+    }
     form.elements.namedItem("mode").value = mode;
     root.querySelectorAll("a[data-mode]").forEach(link => {
       const active = link.dataset.mode === mode;
@@ -390,7 +425,7 @@ export function initializeProfiler(root) {
       initializeSelect(sample);
     }
     const options = find("options");
-    if (!fields) options.replaceChildren();
+    if (!fields) options.querySelectorAll(".profiler-select").forEach(node => node.remove());
     function add(name, label, entries, multiple = false, plural = label.toLowerCase()) {
       if (fields && !fields.has(name)) return;
       const selected = params.getAll(name);
@@ -404,7 +439,7 @@ export function initializeProfiler(root) {
         disposeSelect(previous);
         previous.replaceWith(container);
       } else {
-        options.append(container);
+        options.insertBefore(container, timeInputs[0].parentElement);
       }
       initializeSelect(container);
     }
@@ -474,7 +509,12 @@ export function initializeProfiler(root) {
     if (descendants) {
       descendants.forEach(name => pendingFields.add(name));
       for (const name of pendingFields) {
-        const container = form.elements.namedItem(name)?.closest(".profiler-select");
+        const control = form.elements.namedItem(name);
+        if (timeInputs.includes(control)) {
+          control.disabled = true;
+          continue;
+        }
+        const container = control?.closest(".profiler-select");
         if (!container) continue;
         bootstrap.Dropdown.getInstance(container.querySelector("button[aria-expanded]"))?.hide();
         container.querySelectorAll("select, button, input").forEach(control => {
@@ -491,16 +531,18 @@ export function initializeProfiler(root) {
       pendingFields.clear();
     });
     if (loaded && params.get("view") === "flamegraph") {
-      await loadGraph(new URLSearchParams(new FormData(form)));
+      await loadGraph(formParams());
     }
   }
 
   form.addEventListener("change", event => {
     if (event.target.tagName !== "SELECT" || event.target.disabled) return;
     if (!filtersReady && !children[event.target.name]) return;
-    const params = new URLSearchParams(new FormData(form));
+    const params = formParams();
     const descendants = children[event.target.name];
     if (descendants) {
+      // Time bounds only affect graph samples, not the available filter options.
+      for (const input of timeInputs) params.delete(input.name);
       for (const name of descendants) params.delete(name);
       loadFilters(params, descendants);
     } else {
@@ -508,10 +550,18 @@ export function initializeProfiler(root) {
       clearGraph();
     }
   });
+  for (const input of timeInputs) {
+    input.addEventListener("input", () => {
+      validateTimeRange();
+      if (filtersReady) cancelRequest();
+      clearGraph();
+    });
+  }
   form.addEventListener("submit", event => {
     event.preventDefault();
     if (!filtersReady || submit.disabled) return;
-    const params = new URLSearchParams(new FormData(form));
+    if (!form.reportValidity()) return;
+    const params = formParams();
     loadGraph(params);
   });
   root.querySelectorAll("a[data-mode], #profiler-reset").forEach(link => {

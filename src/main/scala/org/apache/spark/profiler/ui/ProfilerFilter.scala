@@ -27,7 +27,9 @@ private[profiler] case class ProfilerThread(
     executorId: String,
     threadId: Int,
     name: String,
-    sampleType: String) {
+    sampleType: String,
+    startTime: Long,
+    endTime: Long) {
   def id: String = s"$executorId:$threadId"
   def label: String = s"Executor $executorId / $name (tid=$threadId)"
 }
@@ -83,13 +85,20 @@ private[profiler] case class ProfilerFilter(
     sqlExecution: Option[Long] = None,
     job: Option[Int] = None,
     stage: Option[String] = None,
-    tasks: Set[String] = Set.empty) {
+    tasks: Set[String] = Set.empty,
+    startTime: Option[Long] = None,
+    endTime: Option[Long] = None) {
   require(Set("executor", "task").contains(mode), "Unknown profiler mode")
   require(Set("wall", "cpu").contains(sampleType), "Unknown sample type")
+  // Request timestamps are epoch milliseconds; the JFR filter uses epoch nanoseconds.
+  require((startTime.toSeq ++ endTime.toSeq).forall(t =>
+    t >= 0 && t <= Long.MaxValue / 1000000L), "Time must be a valid epoch millisecond value")
+  require(startTime.forall(start => endTime.forall(_ > start)),
+    "End time must be after start time")
   require(if (mode == "executor") {
     sqlExecution.isEmpty && job.isEmpty && stage.isEmpty && tasks.isEmpty
   } else {
-    executor.isEmpty && threads.isEmpty
+    executor.isEmpty && threads.isEmpty && startTime.isEmpty && endTime.isEmpty
   }, "Cannot combine executor and task filters")
 }
 
@@ -134,7 +143,9 @@ private[profiler] object ProfilerFilter {
       sqlExecution = executionSelection,
       job = jobSelection,
       stage = single("stage"),
-      tasks = values("task").toSet)
+      tasks = values("task").toSet,
+      startTime = single("startTime").map(_.toLong),
+      endTime = single("endTime").map(_.toLong))
   }
 }
 
@@ -146,6 +157,13 @@ private[profiler] case class ProfilerIndex(
   def threadOptions(filter: ProfilerFilter): Seq[ProfilerThread] = {
     threads.filter(t => t.sampleType == filter.sampleType &&
       filter.executor.forall(_ == t.executorId)).distinct.sortBy(t => (t.executorId, t.threadId))
+  }
+
+  def timeRange(filter: ProfilerFilter): Option[(Long, Long)] = {
+    val selected = threadOptions(filter)
+    Option.when(filter.mode == "executor" && selected.nonEmpty) {
+      (selected.map(_.startTime).min, selected.map(_.endTime).max)
+    }
   }
 
   private def sampledSpans(filter: ProfilerFilter): Seq[TaskSpan] = {

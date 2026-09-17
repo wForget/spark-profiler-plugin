@@ -45,7 +45,19 @@ private[profiler] class ProfilerPage(parent: ProfilerTab) extends WebUIPage("") 
           <div id="profiler-sample-type"
               class="d-flex align-items-center flex-wrap gap-3 border-bottom pb-3 mb-3"></div>
           <div id="profiler-hierarchy" class="text-body-secondary mb-3"></div>
-          <div id="profiler-options" class="row"></div>
+          <div id="profiler-options" class="row">
+            <div class="col-md-3 mb-3 d-none">
+              <label for="profiler-start-time" class="form-label">Start time (inclusive)</label>
+              <input id="profiler-start-time" name="startTime" type="datetime-local"
+                  step="0.001" class="form-control" disabled="disabled"/>
+            </div>
+            <div class="col-md-3 mb-3 d-none">
+              <label for="profiler-end-time" class="form-label">End time (exclusive)</label>
+              <input id="profiler-end-time" name="endTime" type="datetime-local"
+                  step="0.001" class="form-control" disabled="disabled"/>
+            </div>
+          </div>
+          <p id="profiler-time-help" class="text-body-secondary d-none"></p>
           <p id="profiler-help" class="text-body-secondary border-top pt-3"></p>
           <button class="btn btn-primary" type="submit" disabled="disabled">
             Show flame graph

@@ -81,10 +81,14 @@ private[profiler] object JfrConvertor {
         .map(s => (s.threadId, s.startNanos, s.endNanos)))
     } else if (selection.executor.exists(_ != executorId)) {
       intervalFilter(Nil)
-    } else if (selection.threads.nonEmpty) {
+    } else if (selection.threads.nonEmpty ||
+        selection.startTime.isDefined || selection.endTime.isDefined) {
+      val start = selection.startTime.map(_ * 1000000L).getOrElse(Long.MinValue)
+      val end = selection.endTime.map(_ * 1000000L).getOrElse(Long.MaxValue)
       intervalFilter(index.threadOptions(selection)
-        .filter(t => t.executorId == executorId && selection.threads.contains(t.id))
-        .map(t => (t.threadId, Long.MinValue, Long.MaxValue)))
+        .filter(t => t.executorId == executorId &&
+          (selection.threads.isEmpty || selection.threads.contains(t.id)))
+        .map(t => (t.threadId, start, end)))
     } else {
       null
     }
@@ -106,8 +110,12 @@ private[profiler] object JfrConvertor {
                 val sampleType = if (state == "STATE_DEFAULT") "cpu" else "wall"
                 val name = Option(reader.threads.get(sample.tid))
                   .getOrElse(s"Thread ${sample.tid}")
+                val time = reader.eventTimeToNanos(sample.time) / 1000000L
+                val previous = threads.get((sample.tid, sampleType))
                 threads((sample.tid, sampleType)) =
-                  ProfilerThread(executorId, sample.tid, name, sampleType)
+                  ProfilerThread(executorId, sample.tid, name, sampleType,
+                    previous.fold(time)(t => math.min(t.startTime, time)),
+                    previous.fold(time + 1)(t => math.max(t.endTime, time + 1)))
               }
             case span: SpanEvent =>
               TaskSpan.parse(span.tag, executorId, span.tid,

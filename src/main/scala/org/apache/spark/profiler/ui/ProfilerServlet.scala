@@ -90,6 +90,9 @@ private[profiler] class ProfilerServlet(
       ("selection" -> (("sqlExecution" -> filter.sqlExecution.map(_.toString).getOrElse("")) ~
         ("job" -> filter.job.map(_.toString).getOrElse("")))) ~
       ("executors" -> (SparkContext.DRIVER_IDENTIFIER +: executors)) ~
+      ("timeRange" -> index.timeRange(filter).map { case (start, end) =>
+        ("startTime" -> start) ~ ("endTime" -> end)
+      }) ~
       ("threads" -> index.threadOptions(filter).map { t =>
         ("id" -> t.id) ~ ("name" -> t.name) ~
           ("executorId" -> t.executorId) ~ ("threadId" -> t.threadId)
