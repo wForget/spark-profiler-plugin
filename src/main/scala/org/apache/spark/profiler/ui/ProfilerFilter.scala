@@ -88,7 +88,7 @@ private[profiler] case class ProfilerFilter(
     startTime: Option[Long] = None,
     endTime: Option[Long] = None) {
   require(Set("executor", "task").contains(mode), "Unknown profiler mode")
-  require(Set("wall", "cpu").contains(sampleType), "Unknown sample type")
+  require(Set("wall", "cpu", "nativemem").contains(sampleType), "Unknown sample type")
   // Request timestamps are epoch milliseconds; the JFR filter uses epoch nanoseconds.
   require((startTime.toSeq ++ endTime.toSeq).forall(t =>
     t >= 0 && t <= Long.MaxValue / 1000000L), "Time must be a valid epoch millisecond value")

@@ -24,7 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import one.convert.{Arguments, Filter, JfrConverter}
 import one.jfr.JfrReader
-import one.jfr.event.{Event, ExecutionSample, SpanEvent}
+import one.jfr.event.{Event, ExecutionSample, MallocEvent, SpanEvent}
 
 import org.apache.spark.profiler.ui.{ProfilerFilter, ProfilerIndex, ProfilerThread, TaskSpan}
 import org.apache.spark.util.Utils
@@ -35,10 +35,14 @@ private[profiler] class JfrConvertor(
     sampleType: String,
     eventFilter: Filter,
     root: FlamegraphNode)
-  extends JfrConverter(reader, new Arguments(s"--$sampleType")) {
+  extends JfrConverter(reader, if (sampleType == "nativemem") {
+    new Arguments("--nativemem", "--leak")
+  } else {
+    new Arguments(s"--$sampleType")
+  }) {
 
   override protected def collectEvents(filter: Filter): Unit = {
-    // Arguments only select the sample type. Selection intervals replace the CLI span filter.
+    // Selection intervals replace the CLI span filter.
     super.collectEvents(eventFilter)
   }
 
@@ -98,6 +102,15 @@ private[profiler] object JfrConvertor {
     val threads = new scala.collection.mutable.HashMap[Int, ProfilerThread]
     val spans = new ArrayBuffer[TaskSpan]
     Utils.tryWithResource(new JfrReader(file.getAbsolutePath)) { reader =>
+      def addThread(event: Event): Unit = {
+        val name = Option(reader.threads.get(event.tid)).getOrElse(s"Thread ${event.tid}")
+        val time = reader.eventTimeToNanos(event.time) / 1000000L
+        val previous = threads.get(event.tid)
+        threads(event.tid) = ProfilerThread(executorId, event.tid, name,
+          previous.fold(time)(t => math.min(t.startTime, time)),
+          previous.fold(time + 1)(t => math.max(t.endTime, time + 1)))
+      }
+
       reader.stopAtNewChunk = true
       while (reader.hasMoreChunks()) {
         var event = reader.readEvent()
@@ -107,15 +120,10 @@ private[profiler] object JfrConvertor {
                 if sample.threadState != ExecutionSample.CPU_TIME_SAMPLE =>
               val state = reader.getEnumValue("jdk.types.ThreadState", sample.threadState)
               if (state != null) {
-                val name = Option(reader.threads.get(sample.tid))
-                  .getOrElse(s"Thread ${sample.tid}")
-                val time = reader.eventTimeToNanos(sample.time) / 1000000L
-                val previous = threads.get(sample.tid)
-                threads(sample.tid) =
-                  ProfilerThread(executorId, sample.tid, name,
-                    previous.fold(time)(t => math.min(t.startTime, time)),
-                    previous.fold(time + 1)(t => math.max(t.endTime, time + 1)))
+                addThread(sample)
               }
+            case nativeMemory: MallocEvent =>
+              addThread(nativeMemory)
             case span: SpanEvent =>
               TaskSpan.parse(span.tag, executorId, span.tid,
                 reader.eventTimeToNanos(span.time),

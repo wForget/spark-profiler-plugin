@@ -471,7 +471,8 @@ export function initializeProfiler(root) {
     find("help").append("Selected threads or tasks contribute samples to one flame graph.");
     const empty = find("empty");
     empty.textContent = !data.hasSamples ?
-      "No CPU or wall samples were found in this application's JFR files under spark.profiler.dfsDir." :
+      "No CPU, wall, or native memory samples were found in this application's JFR files " +
+        "under spark.profiler.dfsDir." :
       mode === "task" && !data.hasTaskSpans ?
         "No task spans were found. Task filtering requires recordings made with " +
           "spark.profiler.executor.taskSpan.enabled=true." : "";

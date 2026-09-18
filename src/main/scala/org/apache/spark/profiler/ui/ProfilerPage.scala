@@ -48,6 +48,11 @@ private[profiler] class ProfilerPage(parent: ProfilerTab) extends WebUIPage("") 
               <input id="profiler-sample-cpu" type="radio" class="btn-check"
                   name="sampleType" value="cpu" form="profiler-filters" disabled="disabled"/>
               <label class="btn btn-outline-primary" for="profiler-sample-cpu">CPU</label>
+              <input id="profiler-sample-nativemem" type="radio" class="btn-check"
+                  name="sampleType" value="nativemem" form="profiler-filters" disabled="disabled"/>
+              <label class="btn btn-outline-primary" for="profiler-sample-nativemem">
+                Native memory
+              </label>
             </div>
           </div>
         </div>
