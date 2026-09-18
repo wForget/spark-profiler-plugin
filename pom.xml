@@ -30,6 +30,7 @@
     <scala.binary.version>2.13</scala.binary.version>
     <scala.version>2.13.18</scala.version>
     <ap-loader.version>4.5-13</ap-loader.version>
+    <jetty.version>12.1.8</jetty.version>
   </properties>
   <packaging>jar</packaging>
   <name>Spark Profiler</name>
@@ -57,6 +58,13 @@
       <groupId>org.apache.spark</groupId>
       <artifactId>spark-core_${scala.binary.version}</artifactId>
       <version>${spark.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- Spark UI's Scala signatures reference Jetty types even though Spark shades them. -->
+    <dependency>
+      <groupId>org.eclipse.jetty.ee10</groupId>
+      <artifactId>jetty-ee10-servlet</artifactId>
+      <version>${jetty.version}</version>
       <scope>provided</scope>
     </dependency>
     <!-- async-profiler loader contains async_profiler binaries for multiple platforms -->
