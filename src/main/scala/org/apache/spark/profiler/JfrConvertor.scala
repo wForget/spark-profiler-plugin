@@ -17,7 +17,7 @@
 
 package org.apache.spark.profiler
 
-import java.io.{File, IOException}
+import java.io.File
 import java.util.{HashMap => JHashMap, TreeMap => JTreeMap}
 
 import scala.collection.mutable.ArrayBuffer
@@ -26,6 +26,7 @@ import one.convert.{Arguments, Filter, JfrConverter}
 import one.jfr.JfrReader
 import one.jfr.event.{Event, ExecutionSample, MallocEvent, SpanEvent}
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.profiler.ui.{ProfilerFilter, ProfilerIndex, ProfilerThread, TaskSpan}
 import org.apache.spark.util.Utils
 
@@ -59,7 +60,7 @@ private[profiler] class JfrConvertor(
   }
 }
 
-private[profiler] object JfrConvertor {
+private[profiler] object JfrConvertor extends Logging {
   /** The intervals use epoch nanoseconds, not ticks local to a particular JFR chunk. */
   def intervalFilter(intervals: Seq[(Int, Long, Long)]): Filter = {
     val deltas = new JHashMap[Integer, JTreeMap[java.lang.Long, Integer]]()
@@ -133,7 +134,7 @@ private[profiler] object JfrConvertor {
           event = reader.readEvent()
         }
       }
-      requireComplete(reader)
+      warnIfIncomplete(reader)
     }
     (threads.values.toSeq, spans.toSeq)
   }
@@ -145,13 +146,14 @@ private[profiler] object JfrConvertor {
       root: FlamegraphNode): Unit = {
     Utils.tryWithResource(new JfrReader(file.getAbsolutePath)) { reader =>
       new JfrConvertor(reader, sampleType, filter, root).convert()
-      requireComplete(reader)
+      warnIfIncomplete(reader)
     }
   }
 
-  private def requireComplete(reader: JfrReader): Unit = {
+  private def warnIfIncomplete(reader: JfrReader): Unit = {
     if (reader.incomplete()) {
-      throw new IOException("The JFR file is incomplete; retry after the next profiler DFS upload.")
+      logWarning("The JFR file is incomplete; using partial profiling data. " +
+        "Retry after the next profiler DFS upload for more complete results.")
     }
   }
 }
