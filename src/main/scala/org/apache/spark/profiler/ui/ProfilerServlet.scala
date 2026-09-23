@@ -85,24 +85,36 @@ private[profiler] class ProfilerServlet(
     val index = store.load(filter, profilerJobs, renderGraph = false).index
     val executors = index.threads.map(_.executorId)
       .filterNot(_ == SparkContext.DRIVER_IDENTIFIER).distinct.sorted
-    val stages = index.stageSpans(filter).map(s => (s.stageId, s.stageAttempt)).distinct.sorted
+    val executorFilter = filter match {
+      case executor: ExecutorProfilerFilter => executor
+      case _: TaskProfilerFilter => ExecutorProfilerFilter()
+    }
+    val taskFilter = filter match {
+      case task: TaskProfilerFilter => task
+      case _: ExecutorProfilerFilter => TaskProfilerFilter()
+    }
+    val timeRange = filter match {
+      case executor: ExecutorProfilerFilter => index.timeRange(executor)
+      case _: TaskProfilerFilter => None
+    }
+    val stages = index.stageSpans(taskFilter).map(s => (s.stageId, s.stageAttempt)).distinct.sorted
     val options: JValue =
-      ("selection" -> (("sqlExecution" -> filter.sqlExecution.map(_.toString).getOrElse("")) ~
-        ("job" -> filter.job.map(_.toString).getOrElse("")))) ~
+      ("selection" -> (("sqlExecution" -> taskFilter.sqlExecution.map(_.toString).getOrElse("")) ~
+        ("job" -> taskFilter.job.map(_.toString).getOrElse("")))) ~
       ("executors" -> (SparkContext.DRIVER_IDENTIFIER +: executors)) ~
-      ("timeRange" -> index.timeRange(filter).map { case (start, end) =>
+      ("timeRange" -> timeRange.map { case (start, end) =>
         ("startTime" -> start) ~ ("endTime" -> end)
       }) ~
-      ("threads" -> index.threadOptions(filter).map { t =>
+      ("threads" -> index.threadOptions(executorFilter).map { t =>
         ("id" -> t.id) ~ ("name" -> t.name) ~
           ("executorId" -> t.executorId) ~ ("threadId" -> t.threadId)
       }) ~
-      ("sqlExecutions" -> index.executionOptions(filter).map(_.toString)) ~
-      ("jobs" -> index.jobOptions(filter).map(_.jobId.toString)) ~
+      ("sqlExecutions" -> index.executionOptions(taskFilter).map(_.toString)) ~
+      ("jobs" -> index.jobOptions(taskFilter).map(_.jobId.toString)) ~
       ("stages" -> stages.map { case (id, attempt) =>
         ("id" -> s"$id:$attempt") ~ ("stageId" -> id) ~ ("attempt" -> attempt)
       }) ~
-      ("tasks" -> index.taskOptions(filter).map { t =>
+      ("tasks" -> index.taskOptions(taskFilter).map { t =>
         ("id" -> t.taskKey) ~ ("taskId" -> t.taskId.toString) ~
           ("attempt" -> t.taskAttempt) ~ ("stageId" -> t.stageId) ~
           ("stageAttempt" -> t.stageAttempt) ~ ("partitionId" -> t.partitionId)

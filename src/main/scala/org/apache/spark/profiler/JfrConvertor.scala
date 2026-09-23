@@ -27,16 +27,16 @@ import one.jfr.JfrReader
 import one.jfr.event.{Event, ExecutionSample, MallocEvent, SpanEvent}
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.profiler.ui.{ProfilerFilter, ProfilerIndex, ProfilerThread, TaskSpan}
+import org.apache.spark.profiler.ui.{ExecutorProfilerFilter, ProfilerFilter, ProfilerIndex, ProfilerSampleType, ProfilerThread, TaskProfilerFilter, TaskSpan}
 import org.apache.spark.util.Utils
 
 /** Converts each JFR chunk before its stack and method dictionaries are replaced. */
 private[profiler] class JfrConvertor(
     reader: JfrReader,
-    sampleType: String,
+    sampleType: ProfilerSampleType.Value,
     eventFilter: Filter,
     root: FlamegraphNode)
-  extends JfrConverter(reader, if (sampleType == "nativemem") {
+  extends JfrConverter(reader, if (sampleType == ProfilerSampleType.NativeMemory) {
     new Arguments("--nativemem", "--leak")
   } else {
     new Arguments(s"--$sampleType")
@@ -80,23 +80,24 @@ private[profiler] object JfrConvertor extends Logging {
   def eventFilter(
       executorId: String,
       index: ProfilerIndex,
-      selection: ProfilerFilter): Filter = {
-    if (selection.mode == "task") {
-      intervalFilter(index.selectedSpans(selection).filter(_.executorId == executorId)
+      selection: ProfilerFilter): Filter = selection match {
+    case filter: TaskProfilerFilter =>
+      intervalFilter(index.selectedSpans(filter).filter(_.executorId == executorId)
         .map(s => (s.threadId, s.startNanos, s.endNanos)))
-    } else if (selection.executor.exists(_ != executorId)) {
-      intervalFilter(Nil)
-    } else if (selection.threads.nonEmpty ||
-        selection.startTime.isDefined || selection.endTime.isDefined) {
-      val start = selection.startTime.map(_ * 1000000L).getOrElse(Long.MinValue)
-      val end = selection.endTime.map(_ * 1000000L).getOrElse(Long.MaxValue)
-      intervalFilter(index.threadOptions(selection)
-        .filter(t => t.executorId == executorId &&
-          (selection.threads.isEmpty || selection.threads.contains(t.id)))
-        .map(t => (t.threadId, start, end)))
-    } else {
-      null
-    }
+    case filter: ExecutorProfilerFilter =>
+      if (filter.executor.exists(_ != executorId)) {
+        intervalFilter(Nil)
+      } else if (filter.threads.nonEmpty ||
+          filter.startTime.isDefined || filter.endTime.isDefined) {
+        val start = filter.startTime.map(_ * 1000000L).getOrElse(Long.MinValue)
+        val end = filter.endTime.map(_ * 1000000L).getOrElse(Long.MaxValue)
+        intervalFilter(index.threadOptions(filter)
+          .filter(t => t.executorId == executorId &&
+            (filter.threads.isEmpty || filter.threads.contains(t.id)))
+          .map(t => (t.threadId, start, end)))
+      } else {
+        null
+      }
   }
 
   def scan(file: File, executorId: String): (Seq[ProfilerThread], Seq[TaskSpan]) = {
@@ -141,7 +142,7 @@ private[profiler] object JfrConvertor extends Logging {
 
   def convert(
       file: File,
-      sampleType: String,
+      sampleType: ProfilerSampleType.Value,
       filter: Filter,
       root: FlamegraphNode): Unit = {
     Utils.tryWithResource(new JfrReader(file.getAbsolutePath)) { reader =>

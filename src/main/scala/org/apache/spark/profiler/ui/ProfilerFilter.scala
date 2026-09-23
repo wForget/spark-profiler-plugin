@@ -17,112 +17,93 @@
 
 package org.apache.spark.profiler.ui
 
-import scala.util.Try
-
 import jakarta.servlet.http.HttpServletRequest
 
 import org.apache.spark.SparkContext
 
-private[profiler] case class ProfilerThread(
-    executorId: String,
-    threadId: Int,
-    name: String,
-    startTime: Long,
-    endTime: Long) {
-  def id: String = s"$executorId:$threadId"
-  def label: String = s"Executor $executorId / $name (tid=$threadId)"
-}
+private[profiler] object ProfilerAnalyzeMode extends Enumeration {
+  type ProfilerAnalyzeMode = Value
+  val Executor: Value = Value("executor")
+  val Task: Value = Value("task")
 
-private[profiler] case class TaskSpan(
-    executorId: String,
-    threadId: Int,
-    startNanos: Long,
-    endNanos: Long,
-    stageId: Int,
-    stageAttempt: Int,
-    partitionId: Int,
-    taskId: Long,
-    taskAttempt: Int) {
-  def stageKey: String = s"$stageId:$stageAttempt"
-  def taskKey: String = s"$stageKey:$taskId:$taskAttempt"
-  def label: String = s"Stage $stageId (attempt $stageAttempt) / " +
-    s"partition $partitionId / task $taskId (attempt $taskAttempt)"
-}
-
-private[profiler] object TaskSpan {
-  def parse(
-      tag: String,
-      executorId: String,
-      threadId: Int,
-      startNanos: Long,
-      endNanos: Long): Option[TaskSpan] = {
-    Option(tag).filter(_.startsWith("SparkTask:")).flatMap { value =>
-      Try {
-        val fields = value.stripPrefix("SparkTask:").split(",").map { field =>
-          val pair = field.split("=", 2)
-          require(pair.length == 2, "Invalid task span field")
-          pair(0) -> pair(1)
-        }.toMap
-        val span = TaskSpan(executorId, threadId, startNanos, endNanos,
-          fields("stageId").toInt, fields("stageAttemptNumber").toInt,
-          fields("partitionId").toInt, fields("taskAttemptId").toLong,
-          fields("attemptNumber").toInt)
-        require(span.stageId >= 0 && span.stageAttempt >= 0 && span.partitionId >= 0 &&
-          span.taskId >= 0 && span.taskAttempt >= 0 && endNanos > startNanos,
-          "Invalid task span")
-        span
-      }.toOption
+  def fromString(value: String): Value = {
+    values.find(_.toString == value).getOrElse {
+      throw new IllegalArgumentException("Unknown profiler mode")
     }
   }
 }
 
-private[profiler] case class ProfilerFilter(
-    mode: String = "executor",
-    sampleType: String = "wall",
+private[profiler] object ProfilerSampleType extends Enumeration {
+  type ProfilerSampleType = Value
+  val Wall: Value = Value("wall")
+  val Cpu: Value = Value("cpu")
+  val NativeMemory: Value = Value("nativemem")
+
+  def fromString(value: String): Value = {
+    values.find(_.toString == value).getOrElse {
+      throw new IllegalArgumentException("Unknown sample type")
+    }
+  }
+}
+
+private[profiler] sealed trait ProfilerFilter {
+  def mode: ProfilerAnalyzeMode.Value
+  def sampleType: ProfilerSampleType.Value
+}
+
+private[profiler] case class ExecutorProfilerFilter(
+    override val sampleType: ProfilerSampleType.Value = ProfilerSampleType.Wall,
     executor: Option[String] = None,
     threads: Set[String] = Set.empty,
-    sqlExecution: Option[Long] = None,
-    job: Option[Int] = None,
-    stage: Option[String] = None,
-    tasks: Set[String] = Set.empty,
     startTime: Option[Long] = None,
-    endTime: Option[Long] = None) {
-  require(Set("executor", "task").contains(mode), "Unknown profiler mode")
-  require(Set("wall", "cpu", "nativemem").contains(sampleType), "Unknown sample type")
+    endTime: Option[Long] = None) extends ProfilerFilter {
+  override val mode: ProfilerAnalyzeMode.Value = ProfilerAnalyzeMode.Executor
+
   // Request timestamps are epoch milliseconds; the JFR filter uses epoch nanoseconds.
   require((startTime.toSeq ++ endTime.toSeq).forall(t =>
     t >= 0 && t <= Long.MaxValue / 1000000L), "Time must be a valid epoch millisecond value")
   require(startTime.forall(start => endTime.forall(_ > start)),
     "End time must be after start time")
-  require(if (mode == "executor") {
-    sqlExecution.isEmpty && job.isEmpty && stage.isEmpty && tasks.isEmpty
-  } else {
-    executor.isEmpty && threads.isEmpty && startTime.isEmpty && endTime.isEmpty
-  }, "Cannot combine executor and task filters")
+}
+
+private[profiler] case class TaskProfilerFilter(
+    override val sampleType: ProfilerSampleType.Value = ProfilerSampleType.Wall,
+    sqlExecution: Option[Long] = None,
+    job: Option[Int] = None,
+    stage: Option[String] = None,
+    tasks: Set[String] = Set.empty) extends ProfilerFilter {
+  override val mode: ProfilerAnalyzeMode.Value = ProfilerAnalyzeMode.Task
 }
 
 private[profiler] object ProfilerFilter {
   def fromRequest(request: HttpServletRequest, jobs: Seq[ProfilerJob]): ProfilerFilter = {
-    def values(name: String): Seq[String] = {
-      Option(request.getParameterValues(name)).toSeq.flatMap(_.toSeq).filter(_.nonEmpty)
+    ProfilerAnalyzeMode.fromString(single(request, "mode").getOrElse("executor")) match {
+      case ProfilerAnalyzeMode.Executor => executorFromRequest(request)
+      case ProfilerAnalyzeMode.Task => taskFromRequest(request, jobs)
     }
-    def single(name: String): Option[String] = {
-      val selected = values(name)
-      require(selected.size <= 1, s"Only one $name may be selected")
-      selected.headOption
-    }
-    val mode = single("mode").getOrElse("executor")
-    val executor = single("executor").orElse {
-      Option.when(mode == "executor")(SparkContext.DRIVER_IDENTIFIER)
-    }
-    val sqlExecution = single("sqlExecution").map(_.toLong)
-    val job = single("job").map(_.toInt)
-    val defaultJob = if (mode == "task") {
-      jobs.filter(j => job.forall(_ == j.jobId) &&
-        sqlExecution.forall(id => j.sqlExecutionId.contains(id))).minByOption(_.jobId)
-    } else {
-      None
-    }
+  }
+
+  private def executorFromRequest(request: HttpServletRequest): ExecutorProfilerFilter = {
+    require(Seq("sqlExecution", "job", "stage", "task").forall(values(request, _).isEmpty),
+      "Cannot combine executor and task filters")
+    ExecutorProfilerFilter(
+      sampleType = single(request, "sampleType").map(ProfilerSampleType.fromString)
+        .getOrElse(ProfilerSampleType.Wall),
+      executor = single(request, "executor").orElse(Some(SparkContext.DRIVER_IDENTIFIER)),
+      threads = values(request, "thread").toSet,
+      startTime = single(request, "startTime").map(_.toLong),
+      endTime = single(request, "endTime").map(_.toLong))
+  }
+
+  private def taskFromRequest(
+      request: HttpServletRequest,
+      jobs: Seq[ProfilerJob]): TaskProfilerFilter = {
+    require(Seq("executor", "thread", "startTime", "endTime")
+      .forall(values(request, _).isEmpty), "Cannot combine executor and task filters")
+    val sqlExecution = single(request, "sqlExecution").map(_.toLong)
+    val job = single(request, "job").map(_.toInt)
+    val defaultJob = jobs.filter(j => job.forall(_ == j.jobId) &&
+      sqlExecution.forall(id => j.sqlExecutionId.contains(id))).minByOption(_.jobId)
     // An explicit empty parameter means All, so only default omitted parameters.
     val executionSelection = if (request.getParameterValues("sqlExecution") == null) {
       defaultJob.flatMap(_.sqlExecutionId)
@@ -134,87 +115,22 @@ private[profiler] object ProfilerFilter {
     } else {
       job
     }
-    ProfilerFilter(
-      mode = mode,
-      sampleType = single("sampleType").getOrElse("wall"),
-      executor = executor,
-      threads = values("thread").toSet,
+    TaskProfilerFilter(
+      sampleType = single(request, "sampleType").map(ProfilerSampleType.fromString)
+        .getOrElse(ProfilerSampleType.Wall),
       sqlExecution = executionSelection,
       job = jobSelection,
-      stage = single("stage"),
-      tasks = values("task").toSet,
-      startTime = single("startTime").map(_.toLong),
-      endTime = single("endTime").map(_.toLong))
-  }
-}
-
-private[profiler] case class ProfilerIndex(
-    threads: Seq[ProfilerThread],
-    spans: Seq[TaskSpan],
-    jobs: Seq[ProfilerJob]) {
-
-  def threadOptions(filter: ProfilerFilter): Seq[ProfilerThread] = {
-    threads.filter(t => filter.executor.forall(_ == t.executorId))
-      .distinct.sortBy(t => (t.executorId, t.threadId))
+      stage = single(request, "stage"),
+      tasks = values(request, "task").toSet)
   }
 
-  def timeRange(filter: ProfilerFilter): Option[(Long, Long)] = {
-    val selected = threadOptions(filter)
-    Option.when(filter.mode == "executor" && selected.nonEmpty) {
-      (selected.map(_.startTime).min, selected.map(_.endTime).max)
-    }
+  private def values(request: HttpServletRequest, name: String): Seq[String] = {
+    Option(request.getParameterValues(name)).toSeq.flatMap(_.toSeq).filter(_.nonEmpty)
   }
 
-  private lazy val sampledSpans: Seq[TaskSpan] = {
-    val sampledThreads = threads.map(_.id).toSet
-    spans.filter(s => sampledThreads.contains(s"${s.executorId}:${s.threadId}"))
-  }
-
-  def executionOptions(filter: ProfilerFilter): Seq[Long] = {
-    jobOptions(filter.copy(sqlExecution = None)).flatMap(_.sqlExecutionId).distinct.sorted
-  }
-
-  def jobOptions(filter: ProfilerFilter): Seq[ProfilerJob] = {
-    val stageIds = sampledSpans.map(_.stageId).toSet
-    jobs.filter(j => j.stageIds.exists(stageIds.contains) &&
-      filter.sqlExecution.forall(id => j.sqlExecutionId.contains(id)))
-      .sortBy(_.jobId)
-  }
-
-  def stageSpans(filter: ProfilerFilter): Seq[TaskSpan] = {
-    val matchingJobs = jobOptions(filter).filter(j => filter.job.forall(_ == j.jobId))
-    val stageIds = matchingJobs.flatMap(_.stageIds).toSet
-    val restrictJobs = filter.sqlExecution.isDefined || filter.job.isDefined
-    sampledSpans.filter(s => !restrictJobs || stageIds.contains(s.stageId))
-  }
-
-  def taskOptions(filter: ProfilerFilter): Seq[TaskSpan] = {
-    stageSpans(filter).filter(s => filter.stage.forall(_ == s.stageKey))
-      .groupBy(_.taskKey).values.map(_.head).toSeq
-      .sortBy(s => (s.stageId, s.stageAttempt, s.taskId, s.taskAttempt))
-  }
-
-  def selectedSpans(filter: ProfilerFilter): Seq[TaskSpan] = {
-    stageSpans(filter).filter(s => filter.stage.forall(_ == s.stageKey) &&
-      (filter.tasks.isEmpty || filter.tasks.contains(s.taskKey)))
-  }
-
-  def validate(filter: ProfilerFilter): Unit = {
-    if (filter.mode == "executor") {
-      // Keep the default driver selectable even when it has no samples.
-      require(filter.executor.forall(id => id == SparkContext.DRIVER_IDENTIFIER ||
-        threads.exists(_.executorId == id)), "Unknown executor")
-      require(filter.threads.subsetOf(threadOptions(filter).map(_.id).toSet),
-        "Unknown thread or thread outside the selected executor")
-    } else {
-      require(filter.sqlExecution.forall(id => executionOptions(filter).contains(id)),
-        "Unknown SQL execution")
-      require(filter.job.forall(id => jobOptions(filter).exists(_.jobId == id)),
-        "Unknown job or job outside the selected SQL execution")
-      require(filter.stage.forall(id => stageSpans(filter).exists(_.stageKey == id)),
-        "Unknown stage attempt or stage outside the selected job")
-      require(filter.tasks.subsetOf(taskOptions(filter).map(_.taskKey).toSet),
-        "Unknown task attempt or task outside the selected stage")
-    }
+  private def single(request: HttpServletRequest, name: String): Option[String] = {
+    val selected = values(request, name)
+    require(selected.size <= 1, s"Only one $name may be selected")
+    selected.headOption
   }
 }

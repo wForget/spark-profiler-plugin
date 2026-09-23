@@ -77,7 +77,8 @@ private[profiler] class ProfilerStore(
     val spans = new ArrayBuffer[TaskSpan]
     val graph = if (renderGraph) Some(FlamegraphNode("root")) else None
     recordings.foreach { case (executorId, local) =>
-      if (selection.mode == "executor" || executorId != SparkContext.DRIVER_IDENTIFIER) {
+      if (selection.mode == ProfilerAnalyzeMode.Executor ||
+          executorId != SparkContext.DRIVER_IDENTIFIER) {
         val (fileThreads, fileSpans) = JfrConvertor.scan(local, executorId)
         threads ++= fileThreads
         spans ++= fileSpans
