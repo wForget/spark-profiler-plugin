@@ -33,30 +33,34 @@ private[profiler] class ProfilerServlet(
   override def doGet(request: HttpServletRequest, response: HttpServletResponse): Unit = {
     response.setContentType("application/json;charset=utf-8")
     response.setHeader("Cache-Control", "no-store")
-    val result = try {
+    try {
       request.getPathInfo match {
         case endpoint @ ("/filters" | "/flamegraph") =>
           val filter = ProfilerFilter.fromRequest(request)
           if (endpoint == "/filters") {
-            filters(filter)
+            response.getWriter.print(filters(filter))
           } else {
-            flamegraph(filter)
+            flamegraph(filter, response)
           }
         case _ =>
           response.setStatus(HttpServletResponse.SC_NOT_FOUND)
-          compact(render(("error" -> "Unknown profiler endpoint"): JValue))
+          response.getWriter.print(
+            compact(render(("error" -> "Unknown profiler endpoint"): JValue)))
       }
     } catch {
-      case e: IllegalArgumentException =>
+      case e: IllegalArgumentException if !response.isCommitted =>
+        response.resetBuffer()
         response.setStatus(HttpServletResponse.SC_BAD_REQUEST)
-        compact(render(("error" -> e.getMessage): JValue))
+        response.getWriter.print(compact(render(("error" -> e.getMessage): JValue)))
       case NonFatal(e) =>
         logWarning("Unable to load profiler data", e)
+        // A streaming response may already be on the wire. Do not append an error object to it.
+        if (response.isCommitted) throw e
+        response.resetBuffer()
         response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR)
-        compact(render(("error" -> ("Unable to load profiler data. " +
-          "Check the History Server logs.")): JValue))
+        response.getWriter.print(compact(render(("error" -> ("Unable to load profiler data. " +
+          "Check the History Server logs.")): JValue)))
     }
-    response.getWriter.print(result)
   }
 
   override def doTrace(request: HttpServletRequest, response: HttpServletResponse): Unit = {
@@ -97,13 +101,15 @@ private[profiler] class ProfilerServlet(
     compact(render(options))
   }
 
-  private def flamegraph(selection: ProfilerFilter): String = {
+  private def flamegraph(
+      selection: ProfilerFilter,
+      response: HttpServletResponse): Unit = {
     val events = selection match {
       case filter: ExecutorProfilerFilter =>
         appStore.validateExecutor(filter)
         Nil
       case filter: TaskProfilerFilter => appStore.selectedTaskEvents(filter)
     }
-    store.flamegraph(selection, events).toJsonString
+    store.writeFlamegraph(selection, events, response.getWriter)
   }
 }

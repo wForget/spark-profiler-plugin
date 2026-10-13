@@ -83,4 +83,31 @@ package object profiler {
       .checkValue(_ >= 0, "Write interval should be non-negative")
       .createWithDefault(30)
 
+  private[profiler] val PROFILER_FLAMEGRAPH_MIN_FRACTION =
+    ConfigBuilder("spark.profiler.flamegraph.minFraction")
+      .doc("Merge subtrees below this fraction of total samples into [other]. " +
+        "Set to zero to disable fraction-based pruning.")
+      .version("5.0.0")
+      .doubleConf
+      .checkValue(v => v >= 0.0 && v <= 1.0, "Minimum fraction must be in [0,1]")
+      .createWithDefault(0.0001)
+
+  private[profiler] val PROFILER_FLAMEGRAPH_MAX_NODES =
+    ConfigBuilder("spark.profiler.flamegraph.maxNodes")
+      .doc("Maximum retained flame graph nodes, including the root. " +
+        "Each retained node may additionally emit one synthetic [other] leaf.")
+      .version("5.0.0")
+      .intConf
+      .checkValue(_ > 0, "Maximum node count must be positive")
+      .createWithDefault(100000)
+
+  private[profiler] val PROFILER_FLAMEGRAPH_MAX_DEPTH =
+    ConfigBuilder("spark.profiler.flamegraph.maxDepth")
+      .doc("Maximum retained stack frames below the flame graph root. " +
+        "Deeper frames are represented by an additional [other] leaf.")
+      .version("5.0.0")
+      .intConf
+      .checkValue(_ >= 0, "Maximum depth must be non-negative")
+      .createWithDefault(256)
+
 }

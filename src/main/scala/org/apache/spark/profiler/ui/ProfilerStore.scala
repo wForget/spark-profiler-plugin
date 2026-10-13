@@ -17,12 +17,14 @@
 
 package org.apache.spark.profiler.ui
 
+import java.io.{BufferedWriter, Writer}
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
-import org.apache.spark.profiler.{FlamegraphNode, JfrConvertor, SparkProfilerTaskThreadEvent}
+import org.apache.spark.profiler.{FlamegraphNode, JfrConvertor, PROFILER_FLAMEGRAPH_MAX_DEPTH, PROFILER_FLAMEGRAPH_MAX_NODES, PROFILER_FLAMEGRAPH_MIN_FRACTION, SparkProfilerTaskThreadEvent}
 import org.apache.spark.util.Utils
 
 /** Reads selected recordings directly from the configured file system. */
@@ -35,10 +37,25 @@ private[profiler] class ProfilerStore(
   private val appPath = new Path(directory, Utils.nameForAppAndAttempt(appId, attemptId))
   private val executorFile = "profile-exec-(.+)\\.jfr".r
 
-  // Serialize requests to bound concurrent parsing and aggregation memory use.
-  def flamegraph(
+  private val minFraction = conf.get(PROFILER_FLAMEGRAPH_MIN_FRACTION)
+  private val maxNodes = conf.get(PROFILER_FLAMEGRAPH_MAX_NODES)
+  private val maxDepth = conf.get(PROFILER_FLAMEGRAPH_MAX_DEPTH)
+
+  // Keep the tree inside the lock through output: another request must not build a second tree
+  // while the first request still holds its tree during serialization or a slow response write.
+  def writeFlamegraph(
       selection: ProfilerFilter,
-      tasks: Seq[SparkProfilerTaskThreadEvent]): FlamegraphNode = synchronized {
+      tasks: Seq[SparkProfilerTaskThreadEvent],
+      writer: Writer): Unit = synchronized {
+    val root = flamegraph(selection, tasks)
+    val buffered = new BufferedWriter(writer, 16 * 1024)
+    root.writeJson(buffered, minFraction)
+    buffered.flush()
+  }
+
+  private def flamegraph(
+      selection: ProfilerFilter,
+      tasks: Seq[SparkProfilerTaskThreadEvent]): FlamegraphNode = {
     val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))
     val recordings = if (fs.exists(appPath)) {
       fs.listStatus(appPath).toSeq.filter(_.isFile).flatMap { status =>
@@ -51,7 +68,7 @@ private[profiler] class ProfilerStore(
     } else {
       Seq.empty
     }
-    val root = FlamegraphNode("root")
+    val root = FlamegraphNode("root", maxNodes, maxDepth)
     val tasksByExecutor = tasks.groupBy(_.executorId)
     recordings.foreach { case (executorId, path) =>
       val selected = selection match {

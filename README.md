@@ -127,6 +127,32 @@ through the current chunk's thread dictionary before aggregating samples. File s
 and seek positions use 64-bit offsets. New or updated recordings are picked up on the
 next request.
 
+Flame graph aggregation and streaming JSON output are serialized per application UI store,
+so concurrent requests to that store do not hold multiple trees. Output is written through a
+16K-character buffer without constructing a complete JSON string or recursively copying subtrees.
+Configure these limits on the History Server:
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `spark.profiler.flamegraph.minFraction` | `0.0001` | Merge subtrees with fewer than 0.01% of total samples into `[other]`. Valid range: 0–1; zero disables this pruning. |
+| `spark.profiler.flamegraph.maxNodes` | `100000` | Maximum retained nodes during aggregation, including the root. Must be positive. |
+| `spark.profiler.flamegraph.maxDepth` | `256` | Maximum retained stack frames below the root. Must be non-negative; zero retains only the root and an `[other]` leaf. |
+
+Node and depth limits apply while building the tree. Once a limit is reached, existing
+paths continue accumulating samples, while unrepresented stack suffixes contribute to
+`[other]` under their nearest retained ancestor. The node limit retains paths in arrival
+order, so a hot path encountered after the budget is exhausted can also be hidden; this
+is a memory safeguard, not a ranking of the hottest paths. Fraction-based pruning uses
+the final total sample count and happens only during output. Each retained node may emit
+one additional synthetic `[other]` leaf, so output has at most twice `maxNodes` nodes and
+at most `maxDepth + 1` levels below the root. Parent totals and actual self samples are
+preserved. Zooming cannot recover omitted frames; narrow the executor/time/task filters
+and reload, or raise the limits to retain more detail.
+
+These limits bound the number of flame graph nodes, not all History Server memory:
+JFR dictionaries, sample collectors, frame-name lengths, and requests for different
+application stores still contribute to heap usage.
+
 ### Code profiling configuration
 
 <table class="spark-config">

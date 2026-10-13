@@ -95,7 +95,8 @@ private[profiler] class JfrConvertor(
       val frames = if (stack == null) {
         Seq("[unknown]")
       } else {
-        stack.methods.indices.reverse.map(i => getMethodName(stack.methods(i), stack.types(i)))
+        // Resolve names lazily: a tree budget may discard the remaining stack suffix.
+        stack.methods.indices.reverse.view.map(i => getMethodName(stack.methods(i), stack.types(i)))
       }
       root.addStack(frames, samples)
     }
