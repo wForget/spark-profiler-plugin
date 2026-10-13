@@ -20,6 +20,7 @@ import java.util.{Map => JMap}
 
 import scala.jdk.CollectionConverters._
 import scala.util.Random
+import scala.util.control.NonFatal
 
 import one.profiler.Span
 
@@ -43,10 +44,15 @@ class ProfilerDriverPlugin extends DriverPlugin with Logging {
   private var pluginCtx: PluginContext = _
   private var profiler: SparkAsyncProfiler = _
   private var driverProfilingEnabled: Boolean = _
+  private var sparkContext: SparkContext = _
+  private var taskThreadEventEnabled: Boolean = _
 
   override def init(sc: SparkContext, ctx: PluginContext): JMap[String, String] = {
     pluginCtx = ctx
     sparkConf = ctx.conf()
+    sparkContext = sc
+    taskThreadEventEnabled = sparkConf.get(PROFILER_EXECUTOR_TASK_THREAD_EVENT_ENABLED) &&
+      sparkConf.getBoolean("spark.eventLog.enabled", false)
     driverProfilingEnabled = sparkConf.get(PROFILER_DRIVER_ENABLED)
     if (driverProfilingEnabled) {
       logInfo("Driver starting profiling")
@@ -54,7 +60,17 @@ class ProfilerDriverPlugin extends DriverPlugin with Logging {
       profiler.start()
     }
 
-    Map.empty[String, String].asJava
+    Map(PROFILER_EXECUTOR_TASK_THREAD_EVENT_ENABLED.key -> taskThreadEventEnabled.toString).asJava
+  }
+
+  override def receive(message: AnyRef): AnyRef = {
+    message match {
+      case event: SparkProfilerTaskThreadEvent if taskThreadEventEnabled =>
+        sparkContext.listenerBus.post(event)
+      case _: SparkProfilerTaskThreadEvent =>
+      case _ => throw new IllegalArgumentException("Unexpected profiler plugin message")
+    }
+    null
   }
 
   override def shutdown(): Unit = {
@@ -73,15 +89,19 @@ class ProfilerExecutorPlugin extends ExecutorPlugin with Logging {
   private var executorProfilerEnabled: Boolean = _
   private var executorProfilerFraction: Double = _
   private var taskSpanEnabled: Boolean = _
+  private var taskThreadEventEnabled: Boolean = _
   private val rand: Random = new Random(System.currentTimeMillis())
   // TaskContext is cleared before the task success and failure callbacks run.
   private val taskSpan = new ThreadLocal[(Long, String)]
+  private val taskThreadEvent = new ThreadLocal[SparkProfilerTaskThreadEvent]
 
   override def init(ctx: PluginContext, extraConf: JMap[String, String]): Unit = {
     pluginCtx = ctx
     sparkConf = ctx.conf()
     executorProfilerEnabled = sparkConf.get(PROFILER_EXECUTOR_ENABLED)
     taskSpanEnabled = sparkConf.get(PROFILER_EXECUTOR_TASK_SPAN_ENABLED)
+    taskThreadEventEnabled = java.lang.Boolean.parseBoolean(
+      extraConf.get(PROFILER_EXECUTOR_TASK_THREAD_EVENT_ENABLED.key))
     if (executorProfilerEnabled) {
       executorProfilerFraction = sparkConf.get(PROFILER_EXECUTOR_FRACTION)
       if (rand.nextInt(100) * 0.01 < executorProfilerFraction) {
@@ -95,6 +115,13 @@ class ProfilerExecutorPlugin extends ExecutorPlugin with Logging {
   }
 
   override def onTaskStart(): Unit = {
+    if (taskThreadEventEnabled) {
+      taskThreadEvent.remove()
+      val context = TaskContext.get()
+      taskThreadEvent.set(SparkProfilerTaskThreadEvent(
+        context.taskAttemptId(), pluginCtx.executorID(), Thread.currentThread().getId,
+        System.currentTimeMillis(), 0L, ""))
+    }
     if (taskSpanEnabled && profiler != null) {
       taskSpan.remove()
       val startTime = Span.start()
@@ -111,11 +138,15 @@ class ProfilerExecutorPlugin extends ExecutorPlugin with Logging {
   }
 
   override def onTaskSucceeded(): Unit = {
-    endTaskSpan("succeeded")
+    val status = "succeeded"
+    endTaskSpan(status)
+    sendTaskEvent(status)
   }
 
   override def onTaskFailed(failureReason: TaskFailedReason): Unit = {
-    endTaskSpan("failed")
+    val status = "failed"
+    endTaskSpan(status)
+    sendTaskEvent(status)
   }
 
   private def endTaskSpan(status: String): Unit = {
@@ -124,6 +155,20 @@ class ProfilerExecutorPlugin extends ExecutorPlugin with Logging {
       taskSpan.remove()
       if (span != null) {
         Span.end(span._1, s"${span._2},status=$status")
+      }
+    }
+  }
+
+  private def sendTaskEvent(status: String): Unit = {
+    if (taskThreadEventEnabled) {
+      val event = taskThreadEvent.get()
+      taskThreadEvent.remove()
+      if (event != null) {
+        try {
+          pluginCtx.send(event.copy(endTime = System.currentTimeMillis(), status = status))
+        } catch {
+          case NonFatal(e) => logWarning("Failed to report task thread event", e)
+        }
       }
     }
   }

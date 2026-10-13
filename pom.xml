@@ -60,6 +60,12 @@
       <version>${spark.version}</version>
       <scope>provided</scope>
     </dependency>
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-sql_${scala.binary.version}</artifactId>
+      <version>${spark.version}</version>
+      <scope>provided</scope>
+    </dependency>
     <!-- Spark UI's Scala signatures reference Jetty types even though Spark shades them. -->
     <dependency>
       <groupId>org.eclipse.jetty.ee10</groupId>
@@ -73,6 +79,12 @@
       <artifactId>ap-loader-all</artifactId>
       <version>${ap-loader.version}</version>
       <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.13.2</version>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 

@@ -24,7 +24,7 @@ mvn clean verify
 ```
 
 Output: `target/spark-profiler-plugin_2.13-0.1.0-SNAPSHOT.jar`.
-The upstream module contains no tests; `verify` compiles the source code and packages the JAR.
+`verify` compiles the source code, runs the tests, and packages the JAR.
 
 Use `-Dspark.version=... -Dscala.version=...` to match your cluster versions.
 The source code uses Spark internal APIs, so rebuild and verify compatibility whenever
@@ -85,6 +85,45 @@ samples to be associated with individual task attempts, including retries and
 speculative attempts. Spans are only emitted while a JFR recording is active.
 
 
+### Task thread mappings in the Spark event log
+
+Enable task thread events independently of JFR profiling and executor sampling:
+
+```properties
+spark.plugins=org.apache.spark.profiler.ProfilerPlugin
+spark.eventLog.enabled=true
+spark.profiler.executor.taskThreadEvent.enabled=true
+```
+
+The mapping option defaults to `false`. When both flags are enabled, each executor
+reports one `org.apache.spark.profiler.SparkProfilerTaskThreadEvent` event after
+its task success or failure callback. The driver writes it through Spark's event
+logging listener. Besides Spark's required `Event` type discriminator, the event
+contains only these six fields:
+
+```json
+{
+  "Event": "org.apache.spark.profiler.SparkProfilerTaskThreadEvent",
+  "taskId": 42,
+  "executorId": "1",
+  "javaThreadId": 73,
+  "startTime": 1791792000000,
+  "endTime": 1791792000123,
+  "status": "succeeded"
+}
+```
+
+`taskId` is `TaskContext.taskAttemptId()` (the same ID as Spark's `Task Info.Task ID`),
+so retries and speculative attempts have distinct IDs. `javaThreadId` is the Java
+thread ID within that executor, not an OS thread ID or a JFR thread reference.
+`startTime` and `endTime` are executor wall-clock Unix timestamps in milliseconds,
+covering the same task callbacks as task spans. `status` is `succeeded` or `failed`
+(including tasks reported through the failure callback after cancellation).
+
+Reporting is asynchronous and best effort. An executor that dies before reporting
+completion may leave no mapping event. Install this plugin JAR on the History Server
+classpath to deserialize these custom events during replay.
+
 ### Code profiling configuration
 
 <table class="spark-config">
@@ -120,6 +159,16 @@ speculative attempts. Spans are only emitted while a JFR recording is active.
     If true, record task attempt spans in the JFR output of executors selected for profiling.
     Requires <code>spark.profiler.executor.enabled=true</code> and respects
     <code>spark.profiler.executor.fraction</code>.
+  </td>
+  <td>5.0.0</td>
+</tr>
+<tr>
+  <td><code>spark.profiler.executor.taskThreadEvent.enabled</code></td>
+  <td><code>false</code></td>
+  <td>
+    If true, record completed task-to-Java-thread mappings in the Spark event log.
+    Requires <code>spark.eventLog.enabled=true</code>; independent of JFR profiling
+    and executor sampling.
   </td>
   <td>5.0.0</td>
 </tr>

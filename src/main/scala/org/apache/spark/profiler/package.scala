@@ -52,6 +52,14 @@ package object profiler {
       .booleanConf
       .createWithDefault(false)
 
+  private[profiler] val PROFILER_EXECUTOR_TASK_THREAD_EVENT_ENABLED =
+    ConfigBuilder("spark.profiler.executor.taskThreadEvent.enabled")
+      .doc("Record task-to-Java-thread mappings in the Spark event log. " +
+        "Requires spark.eventLog.enabled; independent of executor profiling and sampling.")
+      .version("5.0.0")
+      .booleanConf
+      .createWithDefault(false)
+
   private[profiler] val PROFILER_DFS_DIR =
     ConfigBuilder("spark.profiler.dfsDir")
       .doc("HDFS compatible file-system path to where the profiler will write output jfr files.")
