@@ -21,6 +21,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.deploy.SparkHadoopUtil
+import org.apache.spark.internal.Logging
 import org.apache.spark.profiler.{FlamegraphNode, JfrConvertor, SparkProfilerTaskThreadEvent}
 import org.apache.spark.util.Utils
 
@@ -29,7 +30,7 @@ private[profiler] class ProfilerStore(
     conf: SparkConf,
     directory: String,
     appId: String,
-    attemptId: Option[String]) {
+    attemptId: Option[String]) extends Logging {
 
   private val appPath = new Path(directory, Utils.nameForAppAndAttempt(appId, attemptId))
   private val executorFile = "profile-exec-(.+)\\.jfr".r
@@ -58,8 +59,13 @@ private[profiler] class ProfilerStore(
         case _: TaskProfilerFilter => tasksByExecutor.contains(executorId)
       }
       if (selected) {
-        JfrConvertor.convert(fs, path, executorId, selection,
-          tasksByExecutor.getOrElse(executorId, Nil), root)
+        try {
+          JfrConvertor.convert(fs, path, executorId, selection,
+            tasksByExecutor.getOrElse(executorId, Nil), root)
+        } catch {
+          case e: Exception =>
+            logWarning(s"Failed to parse $path for executor $executorId", e)
+        }
       }
     }
     root
