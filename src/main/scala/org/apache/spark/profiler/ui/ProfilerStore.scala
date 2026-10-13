@@ -18,14 +18,18 @@
 package org.apache.spark.profiler.ui
 
 import java.io.{BufferedWriter, Writer}
+import java.util.concurrent.{Callable, TimeUnit}
+import java.util.concurrent.atomic.AtomicInteger
 
-import org.apache.hadoop.fs.Path
+import scala.util.control.NonFatal
+
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
-import org.apache.spark.profiler.{FlamegraphNode, JfrConvertor, PROFILER_FLAMEGRAPH_MAX_DEPTH, PROFILER_FLAMEGRAPH_MAX_NODES, PROFILER_FLAMEGRAPH_MIN_FRACTION, SparkProfilerTaskThreadEvent}
-import org.apache.spark.util.Utils
+import org.apache.spark.profiler.{FlamegraphNode, JfrConvertor, PROFILER_FLAMEGRAPH_MAX_DEPTH, PROFILER_FLAMEGRAPH_MAX_NODES, PROFILER_FLAMEGRAPH_MIN_FRACTION, PROFILER_JFR_PARSE_THREADS, SparkProfilerTaskThreadEvent}
+import org.apache.spark.util.{ThreadUtils, Utils}
 
 /** Reads selected recordings directly from the configured file system. */
 private[profiler] class ProfilerStore(
@@ -40,9 +44,10 @@ private[profiler] class ProfilerStore(
   private val minFraction = conf.get(PROFILER_FLAMEGRAPH_MIN_FRACTION)
   private val maxNodes = conf.get(PROFILER_FLAMEGRAPH_MAX_NODES)
   private val maxDepth = conf.get(PROFILER_FLAMEGRAPH_MAX_DEPTH)
+  private val parseThreads = conf.get(PROFILER_JFR_PARSE_THREADS)
 
-  // Keep the tree inside the lock through output: another request must not build a second tree
-  // while the first request still holds its tree during serialization or a slow response write.
+  // Keep the request lock through output: another request must not build additional trees
+  // while the first request still holds its result during serialization or a slow response write.
   def writeFlamegraph(
       selection: ProfilerFilter,
       tasks: Seq[SparkProfilerTaskThreadEvent],
@@ -70,21 +75,79 @@ private[profiler] class ProfilerStore(
     }
     val root = FlamegraphNode("root", maxNodes, maxDepth)
     val tasksByExecutor = tasks.groupBy(_.executorId)
-    recordings.foreach { case (executorId, path) =>
-      val selected = selection match {
+    val selected = recordings.filter { case (executorId, _) =>
+      selection match {
         case filter: ExecutorProfilerFilter => filter.executor.forall(_ == executorId)
         case _: TaskProfilerFilter => tasksByExecutor.contains(executorId)
       }
-      if (selected) {
-        try {
-          JfrConvertor.convert(fs, path, executorId, selection,
-            tasksByExecutor.getOrElse(executorId, Nil), root)
-        } catch {
-          case e: Exception =>
-            logWarning(s"Failed to parse $path for executor $executorId", e)
-        }
+    }
+    val parallel = parseThreads > 1 && selected.size > 1
+    ProfilerStore.foreachRecording(selected, parseThreads) { case (executorId, path) =>
+      // Each worker retains at most one local tree. Sequential requests use the result directly.
+      val localRoot = if (parallel) FlamegraphNode("root", maxNodes, maxDepth) else root
+      try {
+        convertRecording(fs, path, executorId, selection,
+          tasksByExecutor.getOrElse(executorId, Nil), localRoot)
+      } catch {
+        case NonFatal(e) if !Thread.currentThread().isInterrupted =>
+          logWarning(s"Failed to parse $path for executor $executorId", e)
       }
+      // Preserve partial data from a failed recording, as in the sequential path.
+      if (parallel) root.merge(localRoot)
     }
     root
+  }
+
+  protected def convertRecording(
+      fs: FileSystem,
+      path: Path,
+      executorId: String,
+      selection: ProfilerFilter,
+      tasks: Seq[SparkProfilerTaskThreadEvent],
+      root: FlamegraphNode): Unit = {
+    JfrConvertor.convert(fs, path, executorId, selection, tasks, root)
+  }
+}
+
+private[ui] object ProfilerStore {
+  /** Submit only one task per worker, regardless of the number of recordings. */
+  def foreachRecording[T](recordings: Seq[T], threads: Int)(parse: T => Unit): Unit = {
+    val workers = math.min(threads, recordings.size)
+    if (workers <= 1) {
+      recordings.foreach(parse)
+      return
+    }
+
+    val files = recordings.toIndexedSeq
+    val next = new AtomicInteger()
+    val pool = ThreadUtils.newDaemonFixedThreadPool(workers, "profiler-jfr-parser")
+    try {
+      val futures = (0 until workers).map { _ =>
+        pool.submit(new Callable[Unit] {
+          override def call(): Unit = {
+            var index = next.getAndIncrement()
+            while (index < files.size && !Thread.currentThread().isInterrupted) {
+              parse(files(index))
+              index = next.getAndIncrement()
+            }
+          }
+        })
+      }
+      futures.foreach(_.get())
+    } finally {
+      pool.shutdownNow()
+      // Do not release the store's request lock while old parsers still retain its tree.
+      // Await even on cancellation, then restore any interrupt received during cleanup.
+      var interrupted = Thread.interrupted()
+      var terminated = false
+      while (!terminated) {
+        try {
+          terminated = pool.awaitTermination(1, TimeUnit.SECONDS)
+        } catch {
+          case _: InterruptedException => interrupted = true
+        }
+      }
+      if (interrupted) Thread.currentThread().interrupt()
+    }
   }
 }

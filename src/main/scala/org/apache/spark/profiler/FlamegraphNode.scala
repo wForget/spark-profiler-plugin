@@ -29,7 +29,10 @@ private[profiler] final class FlamegraphNode private (
   private var value: Long = 0L
   private var omitted: Long = 0L
 
-  /** Adds a root-to-leaf stack without expanding aggregated samples into individual stacks. */
+  /**
+   * Adds a root-to-leaf stack without expanding aggregated samples into individual stacks.
+   * The tree must be owned by the calling parser; this operation does not acquire a lock.
+   */
   def addStack(frames: Iterable[String], samples: Long): Unit = {
     require(samples >= 0, "Sample count must be non-negative")
     if (samples > 0) {
@@ -64,6 +67,52 @@ private[profiler] final class FlamegraphNode private (
               expanding = false
           }
         }
+      }
+    }
+  }
+
+  /**
+   * Copies a completed parser tree into this root while respecting this tree's budgets.
+   * The source must not be modified during the merge. Concurrent merges into this root are
+   * allowed, but addStack and serialization must not run concurrently with a merge.
+   */
+  def merge(source: FlamegraphNode): Unit = synchronized {
+    require(source ne this, "Cannot merge a flame graph into itself")
+    require(source.name == name, "Flame graph roots must have the same name")
+
+    class Pending(val target: FlamegraphNode, source: FlamegraphNode, val depth: Int) {
+      val remaining: Iterator[FlamegraphNode] = source.children.valuesIterator
+      target.value += source.value
+      target.omitted += source.omitted
+    }
+
+    // Iterative traversal avoids overflowing the JVM stack for large configured depths.
+    val pending = new ArrayBuffer[Pending]()
+    pending += new Pending(this, source, 0)
+    while (pending.nonEmpty) {
+      val parent = pending.last
+      if (parent.remaining.hasNext) {
+        val child = parent.remaining.next()
+        val target = if (parent.depth >= budget.maxDepth) {
+          None
+        } else {
+          parent.target.children.get(child.name).orElse {
+            if (budget.nodes < budget.maxNodes) {
+              val node = new FlamegraphNode(child.name, budget)
+              parent.target.children.put(child.name, node)
+              budget.nodes += 1
+              Some(node)
+            } else {
+              None
+            }
+          }
+        }
+        target match {
+          case Some(node) => pending += new Pending(node, child, parent.depth + 1)
+          case None => parent.target.omitted += child.value
+        }
+      } else {
+        pending.remove(pending.size - 1)
       }
     }
   }

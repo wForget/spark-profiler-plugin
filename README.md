@@ -127,22 +127,36 @@ through the current chunk's thread dictionary before aggregating samples. File s
 and seek positions use 64-bit offsets. New or updated recordings are picked up on the
 next request.
 
-Flame graph aggregation and streaming JSON output are serialized per application UI store,
-so concurrent requests to that store do not hold multiple trees. Output is written through a
+Flame graph requests, including streaming JSON output, are serialized per application UI store,
+so concurrent requests to that store do not build trees at the same time. Output is written through a
 16K-character buffer without constructing a complete JSON string or recursively copying subtrees.
 Configure these limits on the History Server:
 
 | Property | Default | Meaning |
 | --- | --- | --- |
+| `spark.profiler.jfr.parseThreads` | `1` | Maximum selected JFR files parsed concurrently per application UI store. Must be positive; use, for example, `4` to enable parallel parsing. |
 | `spark.profiler.flamegraph.minFraction` | `0.0001` | Merge subtrees with fewer than 0.01% of total samples into `[other]`. Valid range: 0–1; zero disables this pruning. |
-| `spark.profiler.flamegraph.maxNodes` | `100000` | Maximum retained nodes during aggregation, including the root. Must be positive. |
+| `spark.profiler.flamegraph.maxNodes` | `100000` | Maximum retained nodes in each parser's local tree and in the merged result, including the root. Must be positive. |
 | `spark.profiler.flamegraph.maxDepth` | `256` | Maximum retained stack frames below the root. Must be non-negative; zero retains only the root and an `[other]` leaf. |
+
+Each parsing worker owns its reader, input stream, dictionaries and event aggregator;
+chunks within a file remain sequential, including native-memory allocation/free tracking.
+In parallel mode, each worker builds a separate tree for its current file without locking
+individual stack updates, then merges it into the result under a lock. Both local trees
+and the result enforce the configured node and depth limits. At most one local tree per
+worker plus the result is retained; tree storage is therefore bounded by
+`(active workers + 1) * maxNodes` retained nodes. Sequential mode builds the result directly.
+Reader and aggregation memory also grows with the number of active workers. Parallelism is
+bounded by the selected file count; selecting one executor still uses one parser.
+The limit is per application UI store, so different applications can parse concurrently.
 
 Node and depth limits apply while building the tree. Once a limit is reached, existing
 paths continue accumulating samples, while unrepresented stack suffixes contribute to
-`[other]` under their nearest retained ancestor. The node limit retains paths in arrival
-order, so a hot path encountered after the budget is exhausted can also be hidden; this
-is a memory safeguard, not a ranking of the hottest paths. Fraction-based pruning uses
+`[other]` under their nearest retained ancestor. Paths already omitted from a local tree
+remain omitted after merging. The node limit retains paths in insertion order; parallel
+merges use completion and tree traversal order, so retained paths may differ from sequential
+parsing and between runs. A hot path encountered after the budget is exhausted can also
+be hidden; this is a memory safeguard, not a ranking of the hottest paths. Fraction-based pruning uses
 the final total sample count and happens only during output. Each retained node may emit
 one additional synthetic `[other]` leaf, so output has at most twice `maxNodes` nodes and
 at most `maxDepth + 1` levels below the root. Parent totals and actual self samples are

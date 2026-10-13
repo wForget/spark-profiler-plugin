@@ -9,6 +9,7 @@ import one.jfr.event.*;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.lang.reflect.Constructor;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -187,6 +188,9 @@ public class ProfilerJfrReader implements Closeable {
     @SuppressWarnings("unchecked")
     public <E extends Event> E readEvent(Class<E> cls) throws IOException {
         while (ensureBytes(CHUNK_HEADER_SIZE)) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedIOException("JFR parsing interrupted");
+            }
             int pos = buf.position();
             int size = getVarint();
             int type = getVarint();

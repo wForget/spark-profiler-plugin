@@ -83,6 +83,16 @@ package object profiler {
       .checkValue(_ >= 0, "Write interval should be non-negative")
       .createWithDefault(30)
 
+  private[profiler] val PROFILER_JFR_PARSE_THREADS =
+    ConfigBuilder("spark.profiler.jfr.parseThreads")
+      .doc("Maximum JFR files parsed concurrently per application UI store. " +
+        "Each parser has its own input buffer, dictionaries and sample aggregation state. " +
+        "Set to one for sequential parsing.")
+      .version("5.0.0")
+      .intConf
+      .checkValue(_ > 0, "JFR parser thread count must be positive")
+      .createWithDefault(1)
+
   private[profiler] val PROFILER_FLAMEGRAPH_MIN_FRACTION =
     ConfigBuilder("spark.profiler.flamegraph.minFraction")
       .doc("Merge subtrees below this fraction of total samples into [other]. " +
