@@ -45,13 +45,6 @@ package object profiler {
         "Fraction of executors to profile must be in [0,1]")
       .createWithDefault(0.1)
 
-  private[profiler] val PROFILER_EXECUTOR_TASK_SPAN_ENABLED =
-    ConfigBuilder("spark.profiler.executor.taskSpan.enabled")
-      .doc("Record task attempt spans in the JFR output of executors selected for profiling.")
-      .version("5.0.0")
-      .booleanConf
-      .createWithDefault(false)
-
   private[profiler] val PROFILER_EXECUTOR_TASK_THREAD_EVENT_ENABLED =
     ConfigBuilder("spark.profiler.executor.taskThreadEvent.enabled")
       .doc("Record task-to-Java-thread mappings in the Spark event log. " +

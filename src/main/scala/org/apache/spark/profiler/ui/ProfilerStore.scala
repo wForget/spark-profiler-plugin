@@ -19,16 +19,12 @@ package org.apache.spark.profiler.ui
 
 import java.io.File
 
-import scala.collection.mutable.ArrayBuffer
-
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.deploy.SparkHadoopUtil
-import org.apache.spark.profiler.{FlamegraphNode, JfrConvertor}
+import org.apache.spark.profiler.{FlamegraphNode, JfrConvertor, SparkProfilerTaskThreadEvent}
 import org.apache.spark.util.Utils
-
-private[profiler] case class ProfilerResult(index: ProfilerIndex, graph: Option[FlamegraphNode])
 
 /** Local recording snapshot owned by the profiler servlet lifecycle. */
 private[profiler] class ProfilerStore(
@@ -42,7 +38,7 @@ private[profiler] class ProfilerStore(
   private var localDirectory: Option[File] = None
   private var recordings: Seq[(String, File)] = Seq.empty
 
-  def download(): Unit = synchronized {
+  private def download(): Unit = synchronized {
     require(localDirectory.isEmpty, "Profiler recordings have already been downloaded")
     val tempDir = Utils.createTempDir(namePrefix = "spark-profiler")
     localDirectory = Some(tempDir)
@@ -68,30 +64,23 @@ private[profiler] class ProfilerStore(
   }
 
   // Keep cleanup from deleting recordings while a request is reading them.
-  def load(
+  def flamegraph(
       selection: ProfilerFilter,
-      jobs: Seq[ProfilerJob],
-      renderGraph: Boolean): ProfilerResult = synchronized {
-    require(localDirectory.isDefined, "Profiler recordings have not been downloaded")
-    val threads = new ArrayBuffer[ProfilerThread]
-    val spans = new ArrayBuffer[TaskSpan]
-    val graph = if (renderGraph) Some(FlamegraphNode("root")) else None
+      tasks: Seq[SparkProfilerTaskThreadEvent]): FlamegraphNode = synchronized {
+    if (localDirectory.isEmpty) download()
+    val root = FlamegraphNode("root")
+    val tasksByExecutor = tasks.groupBy(_.executorId)
     recordings.foreach { case (executorId, local) =>
-      if (selection.mode == ProfilerAnalyzeMode.Executor ||
-          executorId != SparkContext.DRIVER_IDENTIFIER) {
-        val (fileThreads, fileSpans) = JfrConvertor.scan(local, executorId)
-        threads ++= fileThreads
-        spans ++= fileSpans
-        graph.foreach { root =>
-          val index = ProfilerIndex(fileThreads, fileSpans, jobs)
-          val filter = JfrConvertor.eventFilter(executorId, index, selection)
-          JfrConvertor.convert(local, selection.sampleType, filter, root)
-        }
+      val selected = selection match {
+        case filter: ExecutorProfilerFilter => filter.executor.forall(_ == executorId)
+        case _: TaskProfilerFilter => tasksByExecutor.contains(executorId)
+      }
+      if (selected) {
+        JfrConvertor.convert(local, executorId, selection,
+          tasksByExecutor.getOrElse(executorId, Nil), root)
       }
     }
-    val index = ProfilerIndex(threads.toSeq, spans.toSeq, jobs)
-    index.validate(selection)
-    ProfilerResult(index, graph)
+    root
   }
 
   override def close(): Unit = synchronized {

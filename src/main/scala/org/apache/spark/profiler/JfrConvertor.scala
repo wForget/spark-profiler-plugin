@@ -24,27 +24,69 @@ import scala.collection.mutable.ArrayBuffer
 
 import one.convert.{Arguments, Filter, JfrConverter}
 import one.jfr.JfrReader
-import one.jfr.event.{Event, ExecutionSample, MallocEvent, SpanEvent}
+import one.jfr.event.Event
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.profiler.ui.{ExecutorProfilerFilter, ProfilerFilter, ProfilerIndex, ProfilerSampleType, ProfilerThread, TaskProfilerFilter, TaskSpan}
+import org.apache.spark.profiler.ui.{ExecutorProfilerFilter, ProfilerFilter, ProfilerSampleType, TaskProfilerFilter}
 import org.apache.spark.util.Utils
 
-/** Converts each JFR chunk before its stack and method dictionaries are replaced. */
+/** Resolves Java thread IDs per chunk and converts selected samples in a single pass. */
 private[profiler] class JfrConvertor(
     reader: JfrReader,
-    sampleType: ProfilerSampleType.Value,
-    eventFilter: Filter,
+    executorId: String,
+    selection: ProfilerFilter,
+    tasks: Seq[SparkProfilerTaskThreadEvent],
     root: FlamegraphNode)
-  extends JfrConverter(reader, if (sampleType == ProfilerSampleType.NativeMemory) {
+  extends JfrConverter(reader, if (selection.sampleType == ProfilerSampleType.NativeMemory) {
     new Arguments("--nativemem", "--leak")
   } else {
-    new Arguments(s"--$sampleType")
+    new Arguments(s"--${selection.sampleType}")
   }) {
 
+  private val tasksByThread = tasks.filter(_.executorId == executorId).groupBy(_.javaThreadId)
+
   override protected def collectEvents(filter: Filter): Unit = {
-    // Selection intervals replace the CLI span filter.
-    super.collectEvents(eventFilter)
+    super.collectEvents(eventFilter())
+  }
+
+  private def eventFilter(): Filter = selection match {
+    case executor: ExecutorProfilerFilter => executorProfilerEventFilter(executor)
+    case _: TaskProfilerFilter => taskProfilerEventFilter()
+  }
+
+  private def executorProfilerEventFilter(executor: ExecutorProfilerFilter): Filter = {
+    if (executor.executor.exists(_ != executorId)) {
+      JfrConvertor.intervalFilter(Nil)
+    } else if (executor.threads.isEmpty &&
+        executor.startTime.isEmpty && executor.endTime.isEmpty) {
+      null
+    } else {
+      val intervals = new ArrayBuffer[(Int, Long, Long)]
+      val start = executor.startTime.map(_ * 1000000L).getOrElse(Long.MinValue)
+      val end = executor.endTime.map(_ * 1000000L).getOrElse(Long.MaxValue)
+      jfr.threads.forEach { (threadId: Long, name: String) =>
+        val javaThreadId = jfr.javaThreads.get(threadId)
+        if (executor.threads.isEmpty || (javaThreadId != null &&
+            executor.threads.contains(s"$executorId:$javaThreadId"))) {
+          intervals += ((threadId.toInt, start, end))
+        }
+      }
+      JfrConvertor.intervalFilter(intervals.toSeq)
+    }
+  }
+
+  private def taskProfilerEventFilter(): Filter = {
+    val intervals = new ArrayBuffer[(Int, Long, Long)]
+    // Spark's status store has already resolved SQL/job/stage/task selections.
+    jfr.javaThreads.forEach { (threadId: Long, javaThreadId: java.lang.Long) =>
+      tasksByThread.getOrElse(javaThreadId.longValue(), Nil).foreach { task =>
+        val endMillis = if (task.endTime == task.startTime) task.endTime + 1 else task.endTime
+        val start = math.max(task.startTime * 1000000L, jfr.chunkStartNanos)
+        val end = math.min(endMillis * 1000000L, jfr.chunkEndNanos)
+        if (end > start) intervals += ((threadId.toInt, start, end))
+      }
+    }
+    JfrConvertor.intervalFilter(intervals.toSeq)
   }
 
   override protected def convertChunk(): Unit = {
@@ -77,84 +119,18 @@ private[profiler] object JfrConvertor extends Logging {
     new Filter(deltas)
   }
 
-  def eventFilter(
-      executorId: String,
-      index: ProfilerIndex,
-      selection: ProfilerFilter): Filter = selection match {
-    case filter: TaskProfilerFilter =>
-      intervalFilter(index.selectedSpans(filter).filter(_.executorId == executorId)
-        .map(s => (s.threadId, s.startNanos, s.endNanos)))
-    case filter: ExecutorProfilerFilter =>
-      if (filter.executor.exists(_ != executorId)) {
-        intervalFilter(Nil)
-      } else if (filter.threads.nonEmpty ||
-          filter.startTime.isDefined || filter.endTime.isDefined) {
-        val start = filter.startTime.map(_ * 1000000L).getOrElse(Long.MinValue)
-        val end = filter.endTime.map(_ * 1000000L).getOrElse(Long.MaxValue)
-        intervalFilter(index.threadOptions(filter)
-          .filter(t => t.executorId == executorId &&
-            (filter.threads.isEmpty || filter.threads.contains(t.id)))
-          .map(t => (t.threadId, start, end)))
-      } else {
-        null
-      }
-  }
-
-  def scan(file: File, executorId: String): (Seq[ProfilerThread], Seq[TaskSpan]) = {
-    val threads = new scala.collection.mutable.HashMap[Int, ProfilerThread]
-    val spans = new ArrayBuffer[TaskSpan]
-    Utils.tryWithResource(new JfrReader(file.getAbsolutePath)) { reader =>
-      def addThread(event: Event): Unit = {
-        val name = Option(reader.threads.get(event.tid)).getOrElse(s"Thread ${event.tid}")
-        val time = reader.eventTimeToNanos(event.time) / 1000000L
-        val previous = threads.get(event.tid)
-        threads(event.tid) = ProfilerThread(executorId, event.tid, name,
-          previous.fold(time)(t => math.min(t.startTime, time)),
-          previous.fold(time + 1)(t => math.max(t.endTime, time + 1)))
-      }
-
-      reader.stopAtNewChunk = true
-      while (reader.hasMoreChunks()) {
-        var event = reader.readEvent()
-        while (event != null) {
-          event match {
-            case sample: ExecutionSample
-                if sample.threadState != ExecutionSample.CPU_TIME_SAMPLE =>
-              val state = reader.getEnumValue("jdk.types.ThreadState", sample.threadState)
-              if (state != null) {
-                addThread(sample)
-              }
-            case nativeMemory: MallocEvent =>
-              addThread(nativeMemory)
-            case span: SpanEvent =>
-              TaskSpan.parse(span.tag, executorId, span.tid,
-                reader.eventTimeToNanos(span.time),
-                reader.eventTimeToNanos(span.time + span.duration)).foreach(spans += _)
-            case _ =>
-          }
-          event = reader.readEvent()
-        }
-      }
-      warnIfIncomplete(reader)
-    }
-    (threads.values.toSeq, spans.toSeq)
-  }
-
   def convert(
       file: File,
-      sampleType: ProfilerSampleType.Value,
-      filter: Filter,
+      executorId: String,
+      selection: ProfilerFilter,
+      tasks: Seq[SparkProfilerTaskThreadEvent],
       root: FlamegraphNode): Unit = {
     Utils.tryWithResource(new JfrReader(file.getAbsolutePath)) { reader =>
-      new JfrConvertor(reader, sampleType, filter, root).convert()
-      warnIfIncomplete(reader)
-    }
-  }
-
-  private def warnIfIncomplete(reader: JfrReader): Unit = {
-    if (reader.incomplete()) {
-      logWarning("The JFR file is incomplete; using partial profiling data. " +
-        "Retry after the next profiler DFS upload for more complete results.")
+      new JfrConvertor(reader, executorId, selection, tasks, root).convert()
+      if (reader.incomplete()) {
+        logWarning("The JFR file is incomplete; using partial profiling data. " +
+          "Retry after the next profiler DFS upload for more complete results.")
+      }
     }
   }
 }

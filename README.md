@@ -67,24 +67,6 @@ spark.plugins=org.apache.spark.profiler.ProfilerPlugin
 
 Then enable the profiling in the configuration.
 
-### Task spans
-
-Set `spark.profiler.executor.taskSpan.enabled=true` to record each task attempt as a
-`profiler.Span` event on profiled executors. Task spans are disabled by default and
-require executor profiling to be enabled; executor sampling still applies.
-
-Spans are written to the same JFR file as the profiling samples.
-The span starts in the task start callback
-and ends in the success or failure callback, including result serialization on
-successful tasks. Task deserialization before the start callback is not included.
-
-The span tag starts with `SparkTask`, followed by comma-separated `stageId`,
-`stageAttemptNumber`, `partitionId`, `taskAttemptId`, `attemptNumber`, and `status`
-(`succeeded` or `failed`) key-value pairs. These tags allow profiling
-samples to be associated with individual task attempts, including retries and
-speculative attempts. Spans are only emitted while a JFR recording is active.
-
-
 ### Task thread mappings in the Spark event log
 
 Enable task thread events independently of JFR profiling and executor sampling:
@@ -99,7 +81,7 @@ The mapping option defaults to `false`. When both flags are enabled, each execut
 reports one `org.apache.spark.profiler.SparkProfilerTaskThreadEvent` event after
 its task success or failure callback. The driver writes it through Spark's event
 logging listener. Besides Spark's required `Event` type discriminator, the event
-contains only these six fields:
+contains only these five fields:
 
 ```json
 {
@@ -108,8 +90,7 @@ contains only these six fields:
   "executorId": "1",
   "javaThreadId": 73,
   "startTime": 1791792000000,
-  "endTime": 1791792000123,
-  "status": "succeeded"
+  "endTime": 1791792000123
 }
 ```
 
@@ -117,12 +98,29 @@ contains only these six fields:
 so retries and speculative attempts have distinct IDs. `javaThreadId` is the Java
 thread ID within that executor, not an OS thread ID or a JFR thread reference.
 `startTime` and `endTime` are executor wall-clock Unix timestamps in milliseconds,
-covering the same task callbacks as task spans. `status` is `succeeded` or `failed`
-(including tasks reported through the failure callback after cancellation).
+covering task start through the success or failure callback, including result
+serialization on successful tasks but excluding task deserialization.
 
 Reporting is asynchronous and best effort. An executor that dies before reporting
 completion may leave no mapping event. Install this plugin JAR on the History Server
 classpath to deserialize these custom events during replay.
+
+The History Server uses these events to associate tasks with JFR samples. It joins
+`taskId` with Spark task metadata for stage, partition, and attempt filters, then
+resolves `javaThreadId` through each JFR chunk's thread dictionary and filters samples
+by the executor-reported time interval. Tasks completed within a single millisecond
+use a one-millisecond interval. Task filtering requires both the mapping events
+and profiling recordings from the corresponding executors.
+
+Filter options are loaded from Spark's application/SQL status stores and task thread
+events, without downloading or parsing JFR files. Select a stage attempt to load its
+task attempts. Thread options use Java thread IDs from completed task events; the
+driver and other threads without task events remain available through the executor's
+unrestricted view. Time bounds are optional and default to no limit.
+
+JFR files are downloaded when a flame graph is first requested. Each selected file
+is parsed once per graph request, resolving Java thread IDs through the current
+chunk's thread dictionary before aggregating samples.
 
 ### Code profiling configuration
 
@@ -151,16 +149,6 @@ classpath to deserialize these custom events during replay.
     The fraction of executors on which to enable profiling. The executors to be profiled are picked at random.
   </td>
   <td>4.0.0</td>
-</tr>
-<tr>
-  <td><code>spark.profiler.executor.taskSpan.enabled</code></td>
-  <td><code>false</code></td>
-  <td>
-    If true, record task attempt spans in the JFR output of executors selected for profiling.
-    Requires <code>spark.profiler.executor.enabled=true</code> and respects
-    <code>spark.profiler.executor.fraction</code>.
-  </td>
-  <td>5.0.0</td>
 </tr>
 <tr>
   <td><code>spark.profiler.executor.taskThreadEvent.enabled</code></td>

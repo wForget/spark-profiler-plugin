@@ -17,13 +17,10 @@
 
 package org.apache.spark.profiler.ui
 
-import scala.util.Try
-
 import org.apache.spark.SparkConf
-import org.apache.spark.profiler.PROFILER_DFS_DIR
-import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
-import org.apache.spark.status.{AppHistoryServerPlugin, ElementTrackingStore, KVUtils}
-import org.apache.spark.status.KVUtils.KVIndexParam
+import org.apache.spark.profiler.{PROFILER_DFS_DIR, SparkProfilerTaskThreadEvent}
+import org.apache.spark.scheduler.{SparkListener, SparkListenerEvent}
+import org.apache.spark.status.{AppHistoryServerPlugin, ElementTrackingStore}
 import org.apache.spark.ui.SparkUI
 
 class ProfilerHistoryServerPlugin extends AppHistoryServerPlugin {
@@ -42,8 +39,7 @@ class ProfilerHistoryServerPlugin extends AppHistoryServerPlugin {
         val app = ui.store.applicationInfo()
         val store = new ProfilerStore(ui.conf, dir,
           app.id, app.attempts.headOption.flatMap(_.attemptId))
-        val servlet = new ProfilerServlet(store,
-          () => KVUtils.viewToSeq(ui.store.store.view(classOf[ProfilerJob])))
+        val servlet = new ProfilerServlet(store, ProfilerAppStore(ui.store))
         ui.attachHandler(ui.basePath + "/profiler/api", servlet, "/*")
         new ProfilerTab(ui)
       }
@@ -51,17 +47,12 @@ class ProfilerHistoryServerPlugin extends AppHistoryServerPlugin {
   }
 }
 
-// Keep the SQL relationship here so the profiler does not depend on the SQL module.
-private[profiler] class ProfilerJob(
-    @KVIndexParam val jobId: Int,
-    val sqlExecutionId: Option[Long],
-    val stageIds: Seq[Int])
-
 private[profiler] class ProfilerListener(store: ElementTrackingStore) extends SparkListener {
-  override def onJobStart(event: SparkListenerJobStart): Unit = {
-    val executionId = Option(event.properties)
-      .flatMap(p => Option(p.getProperty("spark.sql.execution.id")))
-      .flatMap(id => Try(id.toLong).toOption)
-    store.write(new ProfilerJob(event.jobId, executionId, event.stageIds))
+  override def onOtherEvent(event: SparkListenerEvent): Unit = event match {
+    case mapping: SparkProfilerTaskThreadEvent if mapping.javaThreadId > 0 &&
+        mapping.startTime >= 0 && mapping.endTime >= mapping.startTime &&
+        mapping.endTime < Long.MaxValue / 1000000L =>
+      store.write(mapping)
+    case _ =>
   }
 }

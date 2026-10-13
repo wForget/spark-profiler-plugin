@@ -22,8 +22,6 @@ import scala.jdk.CollectionConverters._
 import scala.util.Random
 import scala.util.control.NonFatal
 
-import one.profiler.Span
-
 import org.apache.spark.{SparkConf, SparkContext, TaskContext, TaskFailedReason}
 import org.apache.spark.api.plugin.{DriverPlugin, ExecutorPlugin, PluginContext, SparkPlugin}
 import org.apache.spark.internal.Logging
@@ -88,18 +86,15 @@ class ProfilerExecutorPlugin extends ExecutorPlugin with Logging {
   private var profiler: SparkAsyncProfiler = _
   private var executorProfilerEnabled: Boolean = _
   private var executorProfilerFraction: Double = _
-  private var taskSpanEnabled: Boolean = _
   private var taskThreadEventEnabled: Boolean = _
   private val rand: Random = new Random(System.currentTimeMillis())
   // TaskContext is cleared before the task success and failure callbacks run.
-  private val taskSpan = new ThreadLocal[(Long, String)]
   private val taskThreadEvent = new ThreadLocal[SparkProfilerTaskThreadEvent]
 
   override def init(ctx: PluginContext, extraConf: JMap[String, String]): Unit = {
     pluginCtx = ctx
     sparkConf = ctx.conf()
     executorProfilerEnabled = sparkConf.get(PROFILER_EXECUTOR_ENABLED)
-    taskSpanEnabled = sparkConf.get(PROFILER_EXECUTOR_TASK_SPAN_ENABLED)
     taskThreadEventEnabled = java.lang.Boolean.parseBoolean(
       extraConf.get(PROFILER_EXECUTOR_TASK_THREAD_EVENT_ENABLED.key))
     if (executorProfilerEnabled) {
@@ -120,52 +115,25 @@ class ProfilerExecutorPlugin extends ExecutorPlugin with Logging {
       val context = TaskContext.get()
       taskThreadEvent.set(SparkProfilerTaskThreadEvent(
         context.taskAttemptId(), pluginCtx.executorID(), Thread.currentThread().getId,
-        System.currentTimeMillis(), 0L, ""))
-    }
-    if (taskSpanEnabled && profiler != null) {
-      taskSpan.remove()
-      val startTime = Span.start()
-      if (startTime != 0) {
-        val context = TaskContext.get()
-        val tag = s"SparkTask:stageId=${context.stageId()}," +
-          s"stageAttemptNumber=${context.stageAttemptNumber()}," +
-          s"partitionId=${context.partitionId()}," +
-          s"taskAttemptId=${context.taskAttemptId()}," +
-          s"attemptNumber=${context.attemptNumber()}"
-        taskSpan.set((startTime, tag))
-      }
+        System.currentTimeMillis(), 0L))
     }
   }
 
   override def onTaskSucceeded(): Unit = {
-    val status = "succeeded"
-    endTaskSpan(status)
-    sendTaskEvent(status)
+    sendTaskEvent()
   }
 
   override def onTaskFailed(failureReason: TaskFailedReason): Unit = {
-    val status = "failed"
-    endTaskSpan(status)
-    sendTaskEvent(status)
+    sendTaskEvent()
   }
 
-  private def endTaskSpan(status: String): Unit = {
-    if (taskSpanEnabled && profiler != null) {
-      val span = taskSpan.get()
-      taskSpan.remove()
-      if (span != null) {
-        Span.end(span._1, s"${span._2},status=$status")
-      }
-    }
-  }
-
-  private def sendTaskEvent(status: String): Unit = {
+  private def sendTaskEvent(): Unit = {
     if (taskThreadEventEnabled) {
       val event = taskThreadEvent.get()
       taskThreadEvent.remove()
       if (event != null) {
         try {
-          pluginCtx.send(event.copy(endTime = System.currentTimeMillis(), status = status))
+          pluginCtx.send(event.copy(endTime = System.currentTimeMillis()))
         } catch {
           case NonFatal(e) => logWarning("Failed to report task thread event", e)
         }

@@ -17,12 +17,12 @@
 package org.apache.spark.profiler
 
 import org.apache.spark.scheduler.SparkListenerEvent
+import org.apache.spark.status.KVUtils.KVIndexParam
 
 /** A completed task attempt and its executor JVM thread; timestamps are epoch milliseconds. */
 case class SparkProfilerTaskThreadEvent(
-    taskId: Long,
-    executorId: String,
+    @KVIndexParam taskId: Long,
+    @KVIndexParam("executorId") executorId: String,
     javaThreadId: Long,
     startTime: Long,
-    endTime: Long,
-    status: String) extends SparkListenerEvent
+    endTime: Long) extends SparkListenerEvent

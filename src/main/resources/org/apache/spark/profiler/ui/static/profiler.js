@@ -395,7 +395,7 @@ export function initializeProfiler(root) {
       for (const input of timeInputs) {
         input.parentElement.classList.toggle("d-none", mode !== "executor");
         input.disabled = mode !== "executor";
-        const value = params.has(input.name) ? params.get(input.name) : data.timeRange?.[input.name];
+        const value = params.get(input.name);
         const date = value !== undefined && value !== null && value !== "" ?
           new Date(Number(value)) : null;
         input.value = date && Number.isFinite(date.getTime()) ?
@@ -405,7 +405,7 @@ export function initializeProfiler(root) {
       validateTimeRange();
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       find("time-help").textContent = `Times use your browser's local timezone (${timezone}). ` +
-        "Defaults cover the selected executor's samples. Clear either endpoint for no limit.";
+        "Leave either endpoint empty for no limit.";
     }
     form.elements.namedItem("mode").value = mode;
     root.querySelectorAll("a[data-mode]").forEach(link => {
@@ -428,9 +428,6 @@ export function initializeProfiler(root) {
     function add(name, label, entries, multiple = false, plural = label.toLowerCase()) {
       if (fields && !fields.has(name)) return;
       const selected = params.getAll(name);
-      if (!params.has(name) && data.selection?.[name] !== undefined) {
-        selected.push(data.selection[name]);
-      }
       if (name === "executor" && !selected.some(Boolean)) selected.push("driver");
       const container = createSelect(name, label, plural, entries, selected, multiple);
       const previous = form.elements.namedItem(name)?.closest(".profiler-select");
@@ -446,11 +443,11 @@ export function initializeProfiler(root) {
     if (mode === "executor") {
       add("executor", "Executor", data.executors.map(id => option(id)));
       add("thread", "Thread", data.threads.map(t => ({
-        value: t.id, label: t.name, detail: `Executor ${t.executorId} / tid=${t.threadId}`,
-        summary: `${t.executorId}: tid=${t.threadId}`
+        value: t.id, label: `Java thread ${t.javaThreadId}`, detail: `Executor ${t.executorId}`,
+        summary: `${t.executorId}: Java thread ${t.javaThreadId}`
       })), true, "threads");
       find("hierarchy").textContent = "Executor (including driver) \u2192 Thread";
-      find("help").textContent = "Select an executor to limit the available threads. " +
+      find("help").textContent = "Thread options come from completed task mappings on the selected executor. " +
         "Leave threads unselected to include all matching threads. ";
     } else {
       add("sqlExecution", "SQL execution", [all, ...data.sqlExecutions.map(id => option(id, `SQL ${id}`))]);
@@ -459,23 +456,20 @@ export function initializeProfiler(root) {
         option(s.id, `Stage ${s.stageId} (attempt ${s.attempt})`))]);
       add("task", "Task attempt", data.tasks.map(t => ({
         value: t.id, label: `Task ${t.taskId} (attempt ${t.attempt})`,
-        detail: `Stage ${t.stageId} (attempt ${t.stageAttempt}) / partition ${t.partitionId}`,
+        detail: `Partition ${t.partitionId}`,
         summary: `Task ${t.taskId} (${t.attempt})`
       })), true, "task attempts");
       find("hierarchy").textContent =
         "SQL execution \u2192 Job \u2192 Stage attempt \u2192 Task attempt";
-      find("help").textContent = "Select any level independently. " +
+      find("help").textContent = "Select a stage attempt to load task attempts. " +
         "A selected parent limits the options below it. " +
         "Leave a level unselected to include all matching values. ";
     }
     find("help").append("Selected threads or tasks contribute samples to one flame graph.");
     const empty = find("empty");
-    empty.textContent = !data.hasSamples ?
-      "No CPU, wall, or native memory samples were found in this application's JFR files " +
-        "under spark.profiler.dfsDir." :
-      mode === "task" && !data.hasTaskSpans ?
-        "No task spans were found. Task filtering requires recordings made with " +
-          "spark.profiler.executor.taskSpan.enabled=true." : "";
+    empty.textContent = mode === "task" && !data.hasTaskMappings ?
+      "No task thread mappings were recorded. Enable spark.eventLog.enabled and " +
+        "spark.profiler.executor.taskThreadEvent.enabled when running the application." : "";
     empty.classList.toggle("d-none", !empty.textContent);
     filtersReady = true;
   }

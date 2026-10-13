@@ -24,20 +24,12 @@ import org.json4s.JsonDSL._
 import org.json4s.JValue
 import org.json4s.jackson.JsonMethods.{compact, render}
 
-import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
 import org.apache.spark.util.Utils
 
 private[profiler] class ProfilerServlet(
     store: ProfilerStore,
-    jobs: () => Seq[ProfilerJob]) extends HttpServlet with Logging {
-
-  override def init(): Unit = {
-    Utils.tryWithSafeFinallyAndFailureCallbacks {
-      super.init()
-      store.download()
-    }(catchBlock = store.close())
-  }
+    appStore: ProfilerAppStore) extends HttpServlet with Logging {
 
   override def destroy(): Unit = {
     Utils.tryWithSafeFinally {
@@ -53,12 +45,11 @@ private[profiler] class ProfilerServlet(
     val result = try {
       request.getPathInfo match {
         case endpoint @ ("/filters" | "/flamegraph") =>
-          val profilerJobs = jobs()
-          val filter = ProfilerFilter.fromRequest(request, profilerJobs)
+          val filter = ProfilerFilter.fromRequest(request)
           if (endpoint == "/filters") {
-            filters(filter, profilerJobs)
+            filters(filter)
           } else {
-            flamegraph(filter, profilerJobs)
+            flamegraph(filter)
           }
         case _ =>
           response.setStatus(HttpServletResponse.SC_NOT_FOUND)
@@ -69,10 +60,10 @@ private[profiler] class ProfilerServlet(
         response.setStatus(HttpServletResponse.SC_BAD_REQUEST)
         compact(render(("error" -> e.getMessage): JValue))
       case NonFatal(e) =>
-        logWarning("Unable to read profiler recordings", e)
+        logWarning("Unable to load profiler data", e)
         response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR)
-        compact(render(("error" -> ("Unable to read profiler recordings. " +
-          "Check the History Server logs and the downloaded JFR files.")): JValue))
+        compact(render(("error" -> ("Unable to load profiler data. " +
+          "Check the History Server logs.")): JValue))
     }
     response.getWriter.print(result)
   }
@@ -81,49 +72,47 @@ private[profiler] class ProfilerServlet(
     response.sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED)
   }
 
-  private def filters(filter: ProfilerFilter, profilerJobs: Seq[ProfilerJob]): String = {
-    val index = store.load(filter, profilerJobs, renderGraph = false).index
-    val executors = index.threads.map(_.executorId)
-      .filterNot(_ == SparkContext.DRIVER_IDENTIFIER).distinct.sorted
-    val executorFilter = filter match {
-      case executor: ExecutorProfilerFilter => executor
-      case _: TaskProfilerFilter => ExecutorProfilerFilter()
+  private def filters(selection: ProfilerFilter): String = {
+    val options: JValue = selection match {
+      case filter: ExecutorProfilerFilter =>
+        appStore.validateExecutor(filter)
+        val threads = appStore.taskThreadEvents(filter.executor)
+          .map(e => (e.executorId, e.javaThreadId)).distinct.sortBy(identity)
+        ("executors" -> appStore.listExecutors()) ~
+          ("threads" -> threads.map { case (executorId, javaThreadId) =>
+            ("id" -> s"$executorId:$javaThreadId") ~
+              ("executorId" -> executorId) ~ ("javaThreadId" -> javaThreadId.toString)
+          })
+      case filter: TaskProfilerFilter =>
+        val stages = appStore.listStages(filter)
+        val stage = filter.stage.map { id =>
+          stages.find(s => s"${s.stageId}:${s.attemptId}" == id)
+            .getOrElse(throw new IllegalArgumentException("Unknown stage attempt"))
+        }
+        // Loading tasks only after a stage is chosen keeps initial filter requests small.
+        val tasks = stage.toSeq.flatMap(s => appStore.listTasks(s.stageId, s.attemptId))
+        ("sqlExecutions" -> appStore.listExecutions().map(_.toString)) ~
+          ("jobs" -> appStore.listJobs(filter.sqlExecution).map(_.jobId.toString)) ~
+          ("stages" -> stages.map { s =>
+            ("id" -> s"${s.stageId}:${s.attemptId}") ~
+              ("stageId" -> s.stageId) ~ ("attempt" -> s.attemptId)
+          }) ~
+          ("tasks" -> tasks.map { t =>
+            ("id" -> t.taskId.toString) ~ ("taskId" -> t.taskId.toString) ~
+              ("attempt" -> t.attempt) ~ ("partitionId" -> t.partitionId)
+          }) ~
+          ("hasTaskMappings" -> appStore.hasTaskThreadEvents)
     }
-    val taskFilter = filter match {
-      case task: TaskProfilerFilter => task
-      case _: ExecutorProfilerFilter => TaskProfilerFilter()
-    }
-    val timeRange = filter match {
-      case executor: ExecutorProfilerFilter => index.timeRange(executor)
-      case _: TaskProfilerFilter => None
-    }
-    val stages = index.stageSpans(taskFilter).map(s => (s.stageId, s.stageAttempt)).distinct.sorted
-    val options: JValue =
-      ("selection" -> (("sqlExecution" -> taskFilter.sqlExecution.map(_.toString).getOrElse("")) ~
-        ("job" -> taskFilter.job.map(_.toString).getOrElse("")))) ~
-      ("executors" -> (SparkContext.DRIVER_IDENTIFIER +: executors)) ~
-      ("timeRange" -> timeRange.map { case (start, end) =>
-        ("startTime" -> start) ~ ("endTime" -> end)
-      }) ~
-      ("threads" -> index.threadOptions(executorFilter).map { t =>
-        ("id" -> t.id) ~ ("name" -> t.name) ~
-          ("executorId" -> t.executorId) ~ ("threadId" -> t.threadId)
-      }) ~
-      ("sqlExecutions" -> index.executionOptions(taskFilter).map(_.toString)) ~
-      ("jobs" -> index.jobOptions(taskFilter).map(_.jobId.toString)) ~
-      ("stages" -> stages.map { case (id, attempt) =>
-        ("id" -> s"$id:$attempt") ~ ("stageId" -> id) ~ ("attempt" -> attempt)
-      }) ~
-      ("tasks" -> index.taskOptions(taskFilter).map { t =>
-        ("id" -> t.taskKey) ~ ("taskId" -> t.taskId.toString) ~
-          ("attempt" -> t.taskAttempt) ~ ("stageId" -> t.stageId) ~
-          ("stageAttempt" -> t.stageAttempt) ~ ("partitionId" -> t.partitionId)
-      }) ~
-      ("hasSamples" -> index.threads.nonEmpty) ~ ("hasTaskSpans" -> index.spans.nonEmpty)
     compact(render(options))
   }
 
-  private def flamegraph(filter: ProfilerFilter, profilerJobs: Seq[ProfilerJob]): String = {
-    store.load(filter, profilerJobs, renderGraph = true).graph.get.toJsonString
+  private def flamegraph(selection: ProfilerFilter): String = {
+    val events = selection match {
+      case filter: ExecutorProfilerFilter =>
+        appStore.validateExecutor(filter)
+        Nil
+      case filter: TaskProfilerFilter => appStore.selectedTaskEvents(filter)
+    }
+    store.flamegraph(selection, events).toJsonString
   }
 }

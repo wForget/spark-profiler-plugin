@@ -71,15 +71,15 @@ private[profiler] case class TaskProfilerFilter(
     sqlExecution: Option[Long] = None,
     job: Option[Int] = None,
     stage: Option[String] = None,
-    tasks: Set[String] = Set.empty) extends ProfilerFilter {
+    tasks: Set[Long] = Set.empty) extends ProfilerFilter {
   override val mode: ProfilerAnalyzeMode.Value = ProfilerAnalyzeMode.Task
 }
 
 private[profiler] object ProfilerFilter {
-  def fromRequest(request: HttpServletRequest, jobs: Seq[ProfilerJob]): ProfilerFilter = {
+  def fromRequest(request: HttpServletRequest): ProfilerFilter = {
     ProfilerAnalyzeMode.fromString(single(request, "mode").getOrElse("executor")) match {
       case ProfilerAnalyzeMode.Executor => executorFromRequest(request)
-      case ProfilerAnalyzeMode.Task => taskFromRequest(request, jobs)
+      case ProfilerAnalyzeMode.Task => taskFromRequest(request)
     }
   }
 
@@ -95,33 +95,16 @@ private[profiler] object ProfilerFilter {
       endTime = single(request, "endTime").map(_.toLong))
   }
 
-  private def taskFromRequest(
-      request: HttpServletRequest,
-      jobs: Seq[ProfilerJob]): TaskProfilerFilter = {
+  private def taskFromRequest(request: HttpServletRequest): TaskProfilerFilter = {
     require(Seq("executor", "thread", "startTime", "endTime")
       .forall(values(request, _).isEmpty), "Cannot combine executor and task filters")
-    val sqlExecution = single(request, "sqlExecution").map(_.toLong)
-    val job = single(request, "job").map(_.toInt)
-    val defaultJob = jobs.filter(j => job.forall(_ == j.jobId) &&
-      sqlExecution.forall(id => j.sqlExecutionId.contains(id))).minByOption(_.jobId)
-    // An explicit empty parameter means All, so only default omitted parameters.
-    val executionSelection = if (request.getParameterValues("sqlExecution") == null) {
-      defaultJob.flatMap(_.sqlExecutionId)
-    } else {
-      sqlExecution
-    }
-    val jobSelection = if (request.getParameterValues("job") == null) {
-      defaultJob.map(_.jobId)
-    } else {
-      job
-    }
     TaskProfilerFilter(
       sampleType = single(request, "sampleType").map(ProfilerSampleType.fromString)
         .getOrElse(ProfilerSampleType.Wall),
-      sqlExecution = executionSelection,
-      job = jobSelection,
+      sqlExecution = single(request, "sqlExecution").map(_.toLong),
+      job = single(request, "job").map(_.toInt),
       stage = single(request, "stage"),
-      tasks = values(request, "task").toSet)
+      tasks = values(request, "task").map(_.toLong).toSet)
   }
 
   private def values(request: HttpServletRequest, name: String): Seq[String] = {
