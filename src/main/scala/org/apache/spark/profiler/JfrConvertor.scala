@@ -38,9 +38,9 @@ private[profiler] class JfrConvertor(
     tasks: Seq[SparkProfilerTaskThreadEvent],
     root: FlamegraphNode)
   extends ProfilerJfrConverter(reader, if (selection.sampleType == ProfilerSampleType.NativeMemory) {
-    new Arguments("--nativemem", "--leak")
+    new Arguments("--nativemem", "--leak", "--norm")
   } else {
-    new Arguments(s"--${selection.sampleType}")
+    new Arguments(s"--${selection.sampleType}", "--norm")
   }) {
 
   private val tasksByThread = tasks.filter(_.executorId == executorId).groupBy(_.javaThreadId)
