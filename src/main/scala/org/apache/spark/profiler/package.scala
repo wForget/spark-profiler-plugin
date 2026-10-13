@@ -109,7 +109,7 @@ package object profiler {
       .version("5.0.0")
       .intConf
       .checkValue(_ > 0, "Maximum node count must be positive")
-      .createWithDefault(100000)
+      .createWithDefault(Integer.MAX_VALUE)
 
   private[profiler] val PROFILER_FLAMEGRAPH_MAX_DEPTH =
     ConfigBuilder("spark.profiler.flamegraph.maxDepth")
