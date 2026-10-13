@@ -25,19 +25,10 @@ import org.json4s.JValue
 import org.json4s.jackson.JsonMethods.{compact, render}
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.util.Utils
 
 private[profiler] class ProfilerServlet(
     store: ProfilerStore,
     appStore: ProfilerAppStore) extends HttpServlet with Logging {
-
-  override def destroy(): Unit = {
-    Utils.tryWithSafeFinally {
-      super.destroy()
-    } {
-      store.close()
-    }
-  }
 
   override def doGet(request: HttpServletRequest, response: HttpServletResponse): Unit = {
     response.setContentType("application/json;charset=utf-8")

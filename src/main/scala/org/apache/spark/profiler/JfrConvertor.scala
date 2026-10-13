@@ -17,14 +17,14 @@
 
 package org.apache.spark.profiler
 
-import java.io.File
 import java.util.{HashMap => JHashMap, TreeMap => JTreeMap}
 
 import scala.collection.mutable.ArrayBuffer
 
-import one.convert.{Arguments, Filter, JfrConverter}
-import one.jfr.JfrReader
+import one.convert.{Arguments, Filter, ProfilerJfrConverter}
+import one.jfr.ProfilerJfrReader
 import one.jfr.event.Event
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.profiler.ui.{ExecutorProfilerFilter, ProfilerFilter, ProfilerSampleType, TaskProfilerFilter}
@@ -32,12 +32,12 @@ import org.apache.spark.util.Utils
 
 /** Resolves Java thread IDs per chunk and converts selected samples in a single pass. */
 private[profiler] class JfrConvertor(
-    reader: JfrReader,
+    reader: ProfilerJfrReader,
     executorId: String,
     selection: ProfilerFilter,
     tasks: Seq[SparkProfilerTaskThreadEvent],
     root: FlamegraphNode)
-  extends JfrConverter(reader, if (selection.sampleType == ProfilerSampleType.NativeMemory) {
+  extends ProfilerJfrConverter(reader, if (selection.sampleType == ProfilerSampleType.NativeMemory) {
     new Arguments("--nativemem", "--leak")
   } else {
     new Arguments(s"--${selection.sampleType}")
@@ -120,12 +120,20 @@ private[profiler] object JfrConvertor extends Logging {
   }
 
   def convert(
-      file: File,
+      fs: FileSystem,
+      path: Path,
       executorId: String,
       selection: ProfilerFilter,
       tasks: Seq[SparkProfilerTaskThreadEvent],
       root: FlamegraphNode): Unit = {
-    Utils.tryWithResource(new JfrReader(file.getAbsolutePath)) { reader =>
+    val size = fs.getFileStatus(path).getLen
+    val input = fs.open(path)
+    val channel = Utils.tryWithSafeFinallyAndFailureCallbacks {
+      new FSDataInputStreamChannel(input, size)
+    }(catchBlock = input.close())
+    // Own the channel here so reader initialization failures also close the input.
+    Utils.tryWithResource(channel) { channel =>
+      val reader = new ProfilerJfrReader(channel)
       new JfrConvertor(reader, executorId, selection, tasks, root).convert()
       if (reader.incomplete()) {
         logWarning("The JFR file is incomplete; using partial profiling data. " +

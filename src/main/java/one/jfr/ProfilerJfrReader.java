@@ -154,14 +154,9 @@ public class ProfilerJfrReader implements Closeable {
     private void registerCustomEvents() {
         customEvents.clear();
 
-        // The following classes are instantiated reflectively.
-        // Make sure to list them in reachability-metadata.json.
-        registerCustomEvent("jdk.CPULoad", CPULoad.class);
-        registerCustomEvent("jdk.GCHeapSummary", GCHeapSummary.class);
-        registerCustomEvent("jdk.ObjectCount", ObjectCount.class);
-        registerCustomEvent("jdk.ObjectCountAfterGC", ObjectCount.class);
-        registerCustomEvent("profiler.ProcessSample", ProcessSample.class);
-
+        // Upstream auxiliary event classes require JfrReader constructors. They are not
+        // needed for flame graphs; sample events are decoded directly by readEvent.
+        // Explicit custom events must accept ProfilerJfrReader instead.
         for (Map.Entry<String, Class<? extends Event>> entry : customEventsByName.entrySet()) {
             registerCustomEvent(entry.getKey(), entry.getValue());
         }

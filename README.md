@@ -113,14 +113,19 @@ use a one-millisecond interval. Task filtering requires both the mapping events
 and profiling recordings from the corresponding executors.
 
 Filter options are loaded from Spark's application/SQL status stores and task thread
-events, without downloading or parsing JFR files. Select a stage attempt to load its
+events, without reading or parsing JFR files. Select a stage attempt to load its
 task attempts. Thread options use Java thread IDs from completed task events; the
 driver and other threads without task events remain available through the executor's
 unrestricted view. Time bounds are optional and default to no limit.
 
-JFR files are downloaded when a flame graph is first requested. Each selected file
-is parsed once per graph request, resolving Java thread IDs through the current
-chunk's thread dictionary before aggregating samples.
+For each flame graph request, selected JFR files are read directly from the configured
+Hadoop file system through a seekable channel, without creating local copies or loading
+entire recordings into memory. The reader uses a 2 MiB input buffer, which can grow for
+large metadata or constant-pool records; parsed dictionaries and aggregated samples
+also consume memory. Each file is parsed once per request, resolving Java thread IDs
+through the current chunk's thread dictionary before aggregating samples. File sizes
+and seek positions use 64-bit offsets. New or updated recordings are picked up on the
+next request.
 
 ### Code profiling configuration
 

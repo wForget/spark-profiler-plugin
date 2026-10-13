@@ -1,0 +1,365 @@
+/*
+ * Copyright The async-profiler authors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+package one.convert;
+
+import one.jfr.*;
+import one.jfr.event.*;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.BitSet;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.regex.Pattern;
+
+import static one.convert.Frame.*;
+
+/**
+ * Adapted from async-profiler 4.5's JfrConverter to accept ProfilerJfrReader.
+ * Keep conversion and aggregation behavior aligned with the ap-loader dependency.
+ */
+public abstract class ProfilerJfrConverter extends Classifier {
+    protected final ProfilerJfrReader jfr;
+    protected final Arguments args;
+    protected final EventCollector collector;
+    protected Dictionary<String> methodNames;
+
+    public ProfilerJfrConverter(ProfilerJfrReader jfr, Arguments args) {
+        this.jfr = jfr;
+        this.args = args;
+
+        EventCollector collector = createCollector(args);
+        this.collector = args.nativemem && args.leak ? new MallocLeakAggregator(collector, args.tail) : collector;
+    }
+
+    public void convert() throws IOException {
+        Filter filter = readFilter();
+
+        jfr.stopAtNewChunk = true;
+        while (jfr.hasMoreChunks()) {
+            // Reset method dictionary, since new chunk may have different IDs
+            methodNames = new Dictionary<>();
+
+            collector.beforeChunk();
+            collectEvents(filter);
+            collector.afterChunk();
+
+            convertChunk();
+        }
+
+        if (collector.finish()) {
+            convertChunk();
+        }
+    }
+
+    protected final Filter readFilter() throws IOException {
+        if (args.latency < 0 && args.tag == null) return null;
+
+        Map<Integer, TreeMap<Long, Integer>> deltas = new HashMap<>();
+        boolean found = false;  // we'll throw an exception if none is found
+
+        jfr.stopAtNewChunk = true;
+        while (jfr.hasMoreChunks()) {
+            long minLatencyTicks = (long) (args.latency * (jfr.ticksPerSec / 1e9));
+            String requiredTag = args.tag;
+            for (IntervalEvent event; (event = jfr.readEvent(IntervalEvent.class)) != null; found = true) {
+                if (event.duration >= minLatencyTicks && (requiredTag == null || requiredTag.equals(event.tag()))) {
+                    TreeMap<Long, Integer> threadDeltas = deltas.computeIfAbsent(event.tid, k -> new TreeMap<>());
+                    threadDeltas.merge(jfr.eventTimeToNanos(event.time), 1, Integer::sum);
+                    threadDeltas.merge(jfr.eventTimeToNanos(event.time + event.duration), -1, Integer::sum);
+                }
+            }
+        }
+        jfr.rewind();
+
+        if (!found) {
+            throw new RuntimeException("No Span/MethodTrace events found");
+        }
+        return new Filter(deltas);
+    }
+
+    protected EventCollector createCollector(Arguments args) {
+        return new EventAggregator(args.threads, args.grain);
+    }
+
+    protected void collectEvents(Filter filter) throws IOException {
+        // args.nativemem ? MallocEvent.class should always be first for the leak detection feature
+        Class<? extends Event> eventClass = args.nativemem ? MallocEvent.class
+                : args.nativelock ? NativeLockEvent.class
+                : args.live ? LiveObject.class
+                : args.alloc ? AllocationSample.class
+                : args.lock ? ContendedLock.class
+                : args.trace ? MethodTrace.class
+                : ExecutionSample.class;
+
+        BitSet threadStates = null;
+        if (args.state != null) {
+            threadStates = new BitSet();
+            for (String state : args.state.toUpperCase().split(",")) {
+                threadStates.set(toThreadState(state));
+            }
+        } else if (args.cpu) {
+            threadStates = getThreadStates(true);
+        } else if (args.wall) {
+            threadStates = getThreadStates(false);
+        } else if (args.cpuTime) {
+            threadStates = new BitSet();
+            threadStates.set(ExecutionSample.CPU_TIME_SAMPLE);
+        }
+
+        long startTicks = args.from != 0 ? toTicks(args.from) : Long.MIN_VALUE;
+        long endTicks = args.to != 0 ? toTicks(args.to) : Long.MAX_VALUE;
+
+        for (Event event; (event = jfr.readEvent(eventClass)) != null; ) {
+            if (event.time >= startTicks && event.time <= endTicks) {
+                if (threadStates == null || threadStates.get(((ExecutionSample) event).threadState)) {
+                    if (filter == null || filter.matches(event.tid, jfr.eventTimeToNanos(event.time))) {
+                        collector.collect(event);
+                    }
+                }
+            }
+        }
+    }
+
+    protected void convertChunk() {
+        // To be overridden in subclasses
+    }
+
+    protected boolean excludeStack(int stackId, int threadId, long classId) {
+        Pattern include = args.include;
+        Pattern exclude = args.exclude;
+        if (include == null && exclude == null) {
+            return false;
+        }
+
+        if (args.threads) {
+            String threadName = getThreadName(threadId);
+            if (exclude != null && exclude.matcher(threadName).matches()) {
+                return true;
+            }
+            if (include != null && include.matcher(threadName).matches()) {
+                if (exclude == null) return false;
+                include = null;
+            }
+        }
+
+        if (classId != 0) {
+            String className = getClassName(classId);
+            if (exclude != null && exclude.matcher(className).matches()) {
+                return true;
+            }
+            if (include != null && include.matcher(className).matches()) {
+                if (exclude == null) return false;
+                include = null;
+            }
+        }
+
+        StackTrace stackTrace = jfr.stackTraces.get(stackId);
+        for (int i = 0; i < stackTrace.methods.length; i++) {
+            String name = getMethodName(stackTrace.methods[i], stackTrace.types[i]);
+            if (exclude != null && exclude.matcher(name).matches()) {
+                return true;
+            }
+            if (include != null && include.matcher(name).matches()) {
+                if (exclude == null) return false;
+                include = null;
+            }
+        }
+        return include != null;
+    }
+
+    protected int toThreadState(String name) {
+        Map<Integer, String> threadStates = jfr.enums.get("jdk.types.ThreadState");
+        if (threadStates != null) {
+            for (Map.Entry<Integer, String> entry : threadStates.entrySet()) {
+                if (entry.getValue().startsWith(name, 6)) {
+                    return entry.getKey();
+                }
+            }
+        }
+        throw new IllegalArgumentException("Unknown thread state: " + name);
+    }
+
+    protected BitSet getThreadStates(boolean cpu) {
+        BitSet set = new BitSet();
+        Map<Integer, String> threadStates = jfr.enums.get("jdk.types.ThreadState");
+        if (threadStates != null) {
+            for (Map.Entry<Integer, String> entry : threadStates.entrySet()) {
+                set.set(entry.getKey(), "STATE_DEFAULT".equals(entry.getValue()) == cpu);
+            }
+        }
+        return set;
+    }
+
+    // millis can be an absolute timestamp or an offset from the beginning/end of the recording
+    protected long toTicks(long millis) {
+        long nanos = millis * 1_000_000;
+        if (millis < 0) {
+            nanos += jfr.endNanos;
+        } else if (millis < 1500000000000L) {
+            nanos += jfr.startNanos;
+        }
+        return (long) ((nanos - jfr.chunkStartNanos) * (jfr.ticksPerSec / 1e9)) + jfr.chunkStartTicks;
+    }
+
+    @Override
+    public String getMethodName(long methodId, byte methodType) {
+        String result = methodNames.get(methodId);
+        if (result == null) {
+            methodNames.put(methodId, result = resolveMethodName(methodId, methodType));
+        }
+        return result;
+    }
+
+    private String resolveMethodName(long methodId, byte methodType) {
+        MethodRef method = jfr.methods.get(methodId);
+        if (method == null) {
+            return "unknown";
+        }
+
+        ClassRef cls = jfr.classes.get(method.cls);
+        byte[] className = jfr.symbols.get(cls.name);
+        byte[] methodName = jfr.symbols.get(method.name);
+
+        if (className == null || className.length == 0 || isNativeFrame(methodType)) {
+            return new String(methodName, StandardCharsets.UTF_8);
+        } else {
+            String classStr = toJavaClassName(className, 0, args.dot);
+            if (methodName == null || methodName.length == 0) {
+                return classStr;
+            }
+            String methodStr = new String(methodName, StandardCharsets.UTF_8);
+            return classStr + '.' + methodStr;
+        }
+    }
+
+    public String getClassName(long classId) {
+        ClassRef cls = jfr.classes.get(classId);
+        if (cls == null) {
+            return "null";
+        }
+        byte[] className = jfr.symbols.get(cls.name);
+
+        int arrayDepth = 0;
+        while (className[arrayDepth] == '[') {
+            arrayDepth++;
+        }
+
+        String name = toJavaClassName(className, arrayDepth, true);
+        while (arrayDepth-- > 0) {
+            name = name.concat("[]");
+        }
+        return name;
+    }
+
+    private String toJavaClassName(byte[] symbol, int start, boolean dotted) {
+        int end = symbol.length;
+        if (start > 0) {
+            switch (symbol[start]) {
+                case 'B':
+                    return "byte";
+                case 'C':
+                    return "char";
+                case 'S':
+                    return "short";
+                case 'I':
+                    return "int";
+                case 'J':
+                    return "long";
+                case 'Z':
+                    return "boolean";
+                case 'F':
+                    return "float";
+                case 'D':
+                    return "double";
+                case 'L':
+                    start++;
+                    end--;
+            }
+        }
+
+        if (args.norm) {
+            for (int i = end - 2; i > start; i--) {
+                if (symbol[i] == '/' || symbol[i] == '.') {
+                    if (symbol[i + 1] >= '0' && symbol[i + 1] <= '9') {
+                        end = i;
+                        if (i > start + 19 && symbol[i - 19] == '+' && symbol[i - 18] == '0') {
+                            // Original JFR transforms lambda names to something like
+                            // pkg.ClassName$$Lambda+0x00007f8177090218/543846639
+                            end = i - 19;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (args.simple) {
+            for (int i = end - 2; i >= start; i--) {
+                if (symbol[i] == '/' && (symbol[i + 1] < '0' || symbol[i + 1] > '9')) {
+                    start = i + 1;
+                    break;
+                }
+            }
+        }
+
+        String s = new String(symbol, start, end - start, StandardCharsets.UTF_8);
+        return dotted ? s.replace('/', '.') : s;
+    }
+
+    public StackTraceElement getStackTraceElement(long methodId, byte methodType, int location) {
+        MethodRef method = jfr.methods.get(methodId);
+        if (method == null) {
+            return new StackTraceElement("", "unknown", null, 0);
+        }
+
+        ClassRef cls = jfr.classes.get(method.cls);
+        byte[] className = jfr.symbols.get(cls.name);
+        byte[] methodName = jfr.symbols.get(method.name);
+
+        String classStr = className == null || className.length == 0 || isNativeFrame(methodType) ? "" :
+                toJavaClassName(className, 0, args.dot);
+        String methodStr = methodName == null || methodName.length == 0 ? "" :
+                new String(methodName, StandardCharsets.UTF_8);
+        return new StackTraceElement(classStr, methodStr, null, location >>> 16);
+    }
+
+    public String getThreadName(int tid) {
+        String threadName = jfr.threads.get(tid);
+        return threadName == null ? "[tid=" + tid + ']' :
+                threadName.startsWith("[tid=") ? threadName : '[' + threadName + " tid=" + tid + ']';
+    }
+
+    protected boolean isNativeFrame(byte methodType) {
+        // In JDK Flight Recorder, TYPE_NATIVE denotes Java native methods,
+        // while in async-profiler, TYPE_NATIVE is for C methods
+        return methodType == TYPE_NATIVE && jfr.getEnumValue("jdk.types.FrameType", TYPE_KERNEL) != null ||
+                methodType == TYPE_CPP ||
+                methodType == TYPE_KERNEL;
+    }
+
+    public String getValueType() {
+        if (args.nativemem) return "malloc";
+        if (args.alloc || args.live) return "allocations";
+        if (args.lock || args.nativelock) return "locks";
+        return "cpu";
+    }
+
+    public String getSampleUnits() {
+        return "count";
+    }
+
+    public String getTotalUnits() {
+        if (args.nativemem || args.alloc || args.live) return "bytes";
+        return "nanoseconds";
+    }
+
+    public double counterFactor() {
+        return (args.lock || args.nativelock) ? jfr.nanosPerTick : 1.0;
+    }
+
+}
