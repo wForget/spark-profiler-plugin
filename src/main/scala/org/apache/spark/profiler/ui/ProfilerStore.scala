@@ -50,6 +50,18 @@ private[profiler] class ProfilerStore(
   private val maxDepth = conf.get(PROFILER_FLAMEGRAPH_MAX_DEPTH)
   private val parseThreads = conf.get(PROFILER_JFR_PARSE_THREADS)
 
+  def listExecutors(): Seq[String] = {
+    val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))
+    recordings(fs).map(_._1).distinct
+  }
+
+  def resolveExecutor(filter: ExecutorProfilerFilter): ExecutorProfilerFilter = {
+    val executors = listExecutors()
+    require(filter.executor.forall(executors.contains), "Unknown executor recording")
+    val default = executors.find(_ == SparkContext.DRIVER_IDENTIFIER).orElse(executors.headOption)
+    filter.copy(executor = filter.executor.orElse(default))
+  }
+
   def listThreads(executor: Option[String]): Seq[ProfilerThread] = synchronized {
     executor.toSeq.flatMap { id =>
       val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))

@@ -112,9 +112,13 @@ by the executor-reported time interval. Tasks completed within a single millisec
 use a one-millisecond interval. Task filtering requires both the mapping events
 and profiling recordings from the corresponding executors.
 
-Executor and task hierarchy options are loaded from Spark's application/SQL status
-stores. Select a stage attempt to load its task attempts. In executor mode, selecting
-an executor (including the driver) loads Java thread IDs and names from that executor's
+Task hierarchy options are loaded from Spark's application/SQL status stores.
+Select a stage attempt to load its task attempts. In executor mode, executor options
+come from recording filenames in the application's profiling directory:
+`profile-driver.jfr` supplies `driver`, and `profile-exec-<id>.jfr` supplies `<id>`.
+Only executors with matching files are listed. The default is the driver when its
+recording exists, otherwise the first available executor; no files means no options.
+Selecting an executor (including the driver) loads Java thread IDs and names from its
 JFR recording, including threads without task events. Thread dictionaries from all
 complete chunks are read without decoding sample events; duplicate Java thread IDs
 are combined. A missing recording yields no thread options. Time bounds are optional

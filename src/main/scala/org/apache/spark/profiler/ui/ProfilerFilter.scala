@@ -19,8 +19,6 @@ package org.apache.spark.profiler.ui
 
 import jakarta.servlet.http.HttpServletRequest
 
-import org.apache.spark.SparkContext
-
 private[profiler] object ProfilerAnalyzeMode extends Enumeration {
   type ProfilerAnalyzeMode = Value
   val Executor: Value = Value("executor")
@@ -89,7 +87,7 @@ private[profiler] object ProfilerFilter {
     ExecutorProfilerFilter(
       sampleType = single(request, "sampleType").map(ProfilerSampleType.fromString)
         .getOrElse(ProfilerSampleType.Wall),
-      executor = single(request, "executor").orElse(Some(SparkContext.DRIVER_IDENTIFIER)),
+      executor = single(request, "executor"),
       threads = values(request, "thread").toSet,
       startTime = single(request, "startTime").map(_.toLong),
       endTime = single(request, "endTime").map(_.toLong))

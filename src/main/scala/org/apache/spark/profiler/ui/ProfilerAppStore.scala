@@ -17,20 +17,14 @@
 
 package org.apache.spark.profiler.ui
 
-import org.apache.spark.SparkContext
 import org.apache.spark.profiler.SparkProfilerTaskThreadEvent
 import org.apache.spark.sql.execution.ui.SQLAppStatusStore
 import org.apache.spark.status.{AppStatusStore, KVUtils}
 import org.apache.spark.status.api.v1.{JobData, StageData, TaskData}
 
-/** Executor and task hierarchy metadata from Spark's status store. */
+/** Task hierarchy metadata and task thread mappings from Spark's status store. */
 case class ProfilerAppStore(store: AppStatusStore) {
   private val sqlStatusStore = new SQLAppStatusStore(store.store)
-
-  def listExecutors(): Seq[String] = {
-    (SparkContext.DRIVER_IDENTIFIER +: store.executorList(activeOnly = false).map(_.id))
-      .distinct.sorted
-  }
 
   def listExecutions(): Seq[Long] = sqlStatusStore.executionsList().map(_.executionId).sorted
 
@@ -81,10 +75,6 @@ case class ProfilerAppStore(store: AppStatusStore) {
   }
 
   def hasTaskThreadEvents: Boolean = store.store.count(classOf[SparkProfilerTaskThreadEvent]) > 0
-
-  private[profiler] def validateExecutor(filter: ExecutorProfilerFilter): Unit = {
-    require(filter.executor.forall(listExecutors().contains), "Unknown executor")
-  }
 
   private[profiler] def selectedTaskEvents(
       filter: TaskProfilerFilter): Seq[SparkProfilerTaskThreadEvent] = {

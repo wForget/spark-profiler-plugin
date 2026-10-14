@@ -36,7 +36,10 @@ private[profiler] class ProfilerServlet(
     try {
       request.getPathInfo match {
         case endpoint @ ("/filters" | "/flamegraph") =>
-          val filter = ProfilerFilter.fromRequest(request)
+          val filter = ProfilerFilter.fromRequest(request) match {
+            case executor: ExecutorProfilerFilter => store.resolveExecutor(executor)
+            case task: TaskProfilerFilter => task
+          }
           if (endpoint == "/filters") {
             response.getWriter.print(filters(filter))
           } else {
@@ -70,9 +73,9 @@ private[profiler] class ProfilerServlet(
   private def filters(selection: ProfilerFilter): String = {
     val options: JValue = selection match {
       case filter: ExecutorProfilerFilter =>
-        appStore.validateExecutor(filter)
         val threads = store.listThreads(filter.executor)
-        ("executors" -> appStore.listExecutors()) ~
+        ("executors" -> store.listExecutors()) ~
+          ("selectedExecutor" -> filter.executor) ~
           ("threads" -> threads.map { thread =>
             ("id" -> thread.id) ~ ("executorId" -> thread.executorId) ~
               ("javaThreadId" -> thread.javaThreadId.toString) ~ ("name" -> thread.name)
@@ -104,9 +107,7 @@ private[profiler] class ProfilerServlet(
       selection: ProfilerFilter,
       response: HttpServletResponse): Unit = {
     val events = selection match {
-      case filter: ExecutorProfilerFilter =>
-        appStore.validateExecutor(filter)
-        Nil
+      case _: ExecutorProfilerFilter => Nil
       case filter: TaskProfilerFilter => appStore.selectedTaskEvents(filter)
     }
     store.writeFlamegraph(selection, events, response.getWriter)

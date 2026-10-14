@@ -429,7 +429,6 @@ export function initializeProfiler(root) {
     function add(name, label, entries, multiple = false, plural = label.toLowerCase()) {
       if (fields && !fields.has(name)) return;
       const selected = params.getAll(name);
-      if (name === "executor" && !selected.some(Boolean)) selected.push("driver");
       const container = createSelect(name, label, plural, entries, selected, multiple);
       const previous = form.elements.namedItem(name)?.closest(".profiler-select");
       if (previous) {
@@ -442,6 +441,8 @@ export function initializeProfiler(root) {
     }
     const all = option("", "All");
     if (mode === "executor") {
+      if (data.selectedExecutor) params.set("executor", data.selectedExecutor);
+      else params.delete("executor");
       add("executor", "Executor", data.executors.map(id => option(id)));
       add("thread", "Thread", data.threads.map(t => ({
         value: t.id, label: t.name || `Java thread ${t.javaThreadId}`,
@@ -470,7 +471,9 @@ export function initializeProfiler(root) {
     }
     find("help").append("Selected threads or tasks contribute samples to one flame graph.");
     const empty = find("empty");
-    empty.textContent = mode === "task" && !data.hasTaskMappings ?
+    empty.textContent = mode === "executor" && !data.executors.length ?
+      "No executor or driver JFR recordings are available." :
+      mode === "task" && !data.hasTaskMappings ?
       "No task thread mappings were recorded. Enable spark.eventLog.enabled and " +
         "spark.profiler.executor.taskThreadEvent.enabled when running the application." : "";
     empty.classList.toggle("d-none", !empty.textContent);
