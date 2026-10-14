@@ -59,10 +59,15 @@ case class ProfilerAppStore(store: AppStatusStore) {
   }
 
   private[profiler] def selectedStages(filter: TaskProfilerFilter): Seq[StageData] = {
-    val stages = listStages(filter)
-    require(filter.stage.forall(id => stages.exists(s => s"${s.stageId}:${s.attemptId}" == id)),
-      "Unknown stage attempt or stage outside the selected job")
-    stages.filter(s => filter.stage.forall(_ == s"${s.stageId}:${s.attemptId}"))
+    filter.stage match {
+      case Some(id) =>
+        val parts = id.split(":", -1)
+        require(parts.length == 2, "Invalid stage attempt")
+        val stage = store.asOption(store.stageAttempt(parts(0).toInt, parts(1).toInt)._1)
+          .getOrElse(throw new IllegalArgumentException("Unknown stage attempt"))
+        Seq(stage)
+      case None => listStages(filter)
+    }
   }
 
   def listTasks(stageId: Int, attemptId: Int): Seq[TaskData] = {
@@ -83,15 +88,15 @@ case class ProfilerAppStore(store: AppStatusStore) {
 
   private[profiler] def selectedTaskEvents(
       filter: TaskProfilerFilter): Seq[SparkProfilerTaskThreadEvent] = {
-    require(filter.tasks.isEmpty || filter.stage.isDefined,
-      "Select a stage attempt before selecting tasks")
-    if (filter.sqlExecution.isEmpty && filter.job.isEmpty && filter.stage.isEmpty) {
+    if (filter.tasks.nonEmpty) {
+      filter.tasks.toSeq.sorted.flatMap { taskId =>
+        store.asOption(store.store.read(classOf[SparkProfilerTaskThreadEvent], taskId))
+      }
+    } else if (filter.sqlExecution.isEmpty && filter.job.isEmpty && filter.stage.isEmpty) {
       taskThreadEvents()
     } else {
       val tasks = selectedStages(filter).flatMap(s => listTasks(s.stageId, s.attemptId))
-      require(filter.tasks.subsetOf(tasks.map(_.taskId).toSet),
-        "Unknown task attempt or task outside the selected stage")
-      tasks.filter(t => filter.tasks.isEmpty || filter.tasks.contains(t.taskId)).flatMap { task =>
+      tasks.flatMap { task =>
         store.asOption(store.store.read(classOf[SparkProfilerTaskThreadEvent], task.taskId))
           .filter(_.executorId == task.executorId)
       }
