@@ -31,6 +31,10 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.profiler.{FlamegraphNode, JfrConvertor, PROFILER_FLAMEGRAPH_MAX_DEPTH, PROFILER_FLAMEGRAPH_MAX_NODES, PROFILER_FLAMEGRAPH_MIN_FRACTION, PROFILER_JFR_PARSE_THREADS, SparkProfilerTaskThreadEvent}
 import org.apache.spark.util.{ThreadUtils, Utils}
 
+private[profiler] case class ProfilerThread(executorId: String, javaThreadId: Long, name: String) {
+  def id: String = s"$executorId:$javaThreadId"
+}
+
 /** Reads selected recordings directly from the configured file system. */
 private[profiler] class ProfilerStore(
     conf: SparkConf,
@@ -46,6 +50,17 @@ private[profiler] class ProfilerStore(
   private val maxDepth = conf.get(PROFILER_FLAMEGRAPH_MAX_DEPTH)
   private val parseThreads = conf.get(PROFILER_JFR_PARSE_THREADS)
 
+  def listThreads(executor: Option[String]): Seq[ProfilerThread] = synchronized {
+    executor.toSeq.flatMap { id =>
+      val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))
+      recordings(fs).filter(_._1 == id).flatMap { case (_, path) =>
+        JfrConvertor.listThreads(fs, path).map { case (javaThreadId, name) =>
+          ProfilerThread(id, javaThreadId, name)
+        }
+      }
+    }
+  }
+
   // Keep the request lock through output: another request must not build additional trees
   // while the first request still holds its result during serialization or a slow response write.
   def writeFlamegraph(
@@ -58,11 +73,8 @@ private[profiler] class ProfilerStore(
     buffered.flush()
   }
 
-  private def flamegraph(
-      selection: ProfilerFilter,
-      tasks: Seq[SparkProfilerTaskThreadEvent]): FlamegraphNode = {
-    val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))
-    val recordings = if (fs.exists(appPath)) {
+  private def recordings(fs: FileSystem): Seq[(String, Path)] = {
+    if (fs.exists(appPath)) {
       fs.listStatus(appPath).toSeq.filter(_.isFile).flatMap { status =>
         status.getPath.getName match {
           case "profile-driver.jfr" => Some(SparkContext.DRIVER_IDENTIFIER -> status.getPath)
@@ -73,9 +85,15 @@ private[profiler] class ProfilerStore(
     } else {
       Seq.empty
     }
+  }
+
+  private def flamegraph(
+      selection: ProfilerFilter,
+      tasks: Seq[SparkProfilerTaskThreadEvent]): FlamegraphNode = {
+    val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))
     val root = FlamegraphNode("root", maxNodes, maxDepth)
     val tasksByExecutor = tasks.groupBy(_.executorId)
-    val selected = recordings.filter { case (executorId, _) =>
+    val selected = recordings(fs).filter { case (executorId, _) =>
       selection match {
         case filter: ExecutorProfilerFilter => filter.executor.forall(_ == executorId)
         case _: TaskProfilerFilter => tasksByExecutor.contains(executorId)

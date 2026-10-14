@@ -23,7 +23,7 @@ import org.apache.spark.sql.execution.ui.SQLAppStatusStore
 import org.apache.spark.status.{AppStatusStore, KVUtils}
 import org.apache.spark.status.api.v1.{JobData, StageData, TaskData}
 
-/** Filter options come from Spark's status store, without opening profiling recordings. */
+/** Executor and task hierarchy metadata from Spark's status store. */
 case class ProfilerAppStore(store: AppStatusStore) {
   private val sqlStatusStore = new SQLAppStatusStore(store.store)
 
@@ -79,11 +79,6 @@ case class ProfilerAppStore(store: AppStatusStore) {
 
   private[profiler] def validateExecutor(filter: ExecutorProfilerFilter): Unit = {
     require(filter.executor.forall(listExecutors().contains), "Unknown executor")
-    if (filter.threads.nonEmpty) {
-      val threads = taskThreadEvents(filter.executor)
-        .map(e => s"${e.executorId}:${e.javaThreadId}").toSet
-      require(filter.threads.subsetOf(threads), "Unknown Java thread in the selected executor")
-    }
   }
 
   private[profiler] def selectedTaskEvents(

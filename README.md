@@ -112,18 +112,22 @@ by the executor-reported time interval. Tasks completed within a single millisec
 use a one-millisecond interval. Task filtering requires both the mapping events
 and profiling recordings from the corresponding executors.
 
-Filter options are loaded from Spark's application/SQL status stores and task thread
-events, without reading or parsing JFR files. Select a stage attempt to load its
-task attempts. Thread options use Java thread IDs from completed task events; the
-driver and other threads without task events remain available through the executor's
-unrestricted view. Time bounds are optional and default to no limit.
+Executor and task hierarchy options are loaded from Spark's application/SQL status
+stores. Select a stage attempt to load its task attempts. In executor mode, selecting
+an executor (including the driver) loads Java thread IDs and names from that executor's
+JFR recording, including threads without task events. Thread dictionaries from all
+complete chunks are read without decoding sample events; duplicate Java thread IDs
+are combined. A missing recording yields no thread options. Time bounds are optional
+and default to no limit.
 
 For each flame graph request, selected JFR files are read directly from the configured
 Hadoop file system through a seekable channel, without creating local copies or loading
 entire recordings into memory. The reader uses a 2 MiB input buffer, which can grow for
 large metadata or constant-pool records; parsed dictionaries and aggregated samples
-also consume memory. Each file is parsed once per request, resolving Java thread IDs
-through the current chunk's thread dictionary before aggregating samples. File sizes
+also consume memory. Explicit thread selections are validated against the selected
+recording's dictionaries. Each file's samples are parsed once per flame graph request,
+resolving Java thread IDs through the current chunk's thread dictionary before
+aggregating samples. File sizes
 and seek positions use 64-bit offsets. New or updated recordings are picked up on the
 next request.
 

@@ -19,6 +19,7 @@ package org.apache.spark.profiler
 
 import java.util.{HashMap => JHashMap, TreeMap => JTreeMap}
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 import one.convert.{Arguments, Filter, ProfilerJfrConverter}
@@ -104,6 +105,24 @@ private[profiler] class JfrConvertor(
 }
 
 private[profiler] object JfrConvertor extends Logging {
+  /** Collect Java threads from every complete chunk, including threads without Spark tasks. */
+  def listThreads(fs: FileSystem, path: Path): Seq[(Long, String)] = {
+    withReader(fs, path) { reader =>
+      val threads = mutable.Map.empty[Long, String]
+      var more = true
+      while (more) {
+        reader.javaThreads.forEach { (threadId: Long, javaThreadId: java.lang.Long) =>
+          // Native-only entries use Java ID zero and cannot be selected by a Java thread ID.
+          if (javaThreadId.longValue() > 0) {
+            threads(javaThreadId.longValue()) = Option(reader.threads.get(threadId)).getOrElse("")
+          }
+        }
+        more = reader.nextChunk()
+      }
+      threads.toSeq.sortBy(_._1)
+    }
+  }
+
   /** The intervals use epoch nanoseconds, not ticks local to a particular JFR chunk. */
   def intervalFilter(intervals: Seq[(Int, Long, Long)]): Filter = {
     val deltas = new JHashMap[Integer, JTreeMap[java.lang.Long, Integer]]()
@@ -127,6 +146,12 @@ private[profiler] object JfrConvertor extends Logging {
       selection: ProfilerFilter,
       tasks: Seq[SparkProfilerTaskThreadEvent],
       root: FlamegraphNode): Unit = {
+    withReader(fs, path) { reader =>
+      new JfrConvertor(reader, executorId, selection, tasks, root).convert()
+    }
+  }
+
+  private def withReader[T](fs: FileSystem, path: Path)(read: ProfilerJfrReader => T): T = {
     val size = fs.getFileStatus(path).getLen
     val input = fs.open(path)
     val channel = Utils.tryWithSafeFinallyAndFailureCallbacks {
@@ -135,11 +160,12 @@ private[profiler] object JfrConvertor extends Logging {
     // Own the channel here so reader initialization failures also close the input.
     Utils.tryWithResource(channel) { channel =>
       val reader = new ProfilerJfrReader(channel)
-      new JfrConvertor(reader, executorId, selection, tasks, root).convert()
+      val result = read(reader)
       if (reader.incomplete()) {
         logWarning("The JFR file is incomplete; using partial profiling data. " +
           "Retry after the next profiler DFS upload for more complete results.")
       }
+      result
     }
   }
 }

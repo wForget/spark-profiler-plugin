@@ -71,12 +71,11 @@ private[profiler] class ProfilerServlet(
     val options: JValue = selection match {
       case filter: ExecutorProfilerFilter =>
         appStore.validateExecutor(filter)
-        val threads = appStore.taskThreadEvents(filter.executor)
-          .map(e => (e.executorId, e.javaThreadId)).distinct.sortBy(identity)
+        val threads = store.listThreads(filter.executor)
         ("executors" -> appStore.listExecutors()) ~
-          ("threads" -> threads.map { case (executorId, javaThreadId) =>
-            ("id" -> s"$executorId:$javaThreadId") ~
-              ("executorId" -> executorId) ~ ("javaThreadId" -> javaThreadId.toString)
+          ("threads" -> threads.map { thread =>
+            ("id" -> thread.id) ~ ("executorId" -> thread.executorId) ~
+              ("javaThreadId" -> thread.javaThreadId.toString) ~ ("name" -> thread.name)
           })
       case filter: TaskProfilerFilter =>
         val stages = appStore.listStages(filter)

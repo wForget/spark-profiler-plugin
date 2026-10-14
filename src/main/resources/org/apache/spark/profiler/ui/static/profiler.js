@@ -443,11 +443,12 @@ export function initializeProfiler(root) {
     if (mode === "executor") {
       add("executor", "Executor", data.executors.map(id => option(id)));
       add("thread", "Thread", data.threads.map(t => ({
-        value: t.id, label: `Java thread ${t.javaThreadId}`, detail: `Executor ${t.executorId}`,
+        value: t.id, label: t.name || `Java thread ${t.javaThreadId}`,
+        detail: `Java thread ${t.javaThreadId} / Executor ${t.executorId}`,
         summary: `${t.executorId}: Java thread ${t.javaThreadId}`
       })), true, "threads");
       find("hierarchy").textContent = "Executor (including driver) \u2192 Thread";
-      find("help").textContent = "Thread options come from completed task mappings on the selected executor. " +
+      find("help").textContent = "Thread options come from the selected executor's JFR recording. " +
         "Leave threads unselected to include all matching threads. ";
     } else {
       add("sqlExecution", "SQL execution", [all, ...data.sqlExecutions.map(id => option(id, `SQL ${id}`))]);

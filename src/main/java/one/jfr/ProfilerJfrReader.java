@@ -41,6 +41,7 @@ public class ProfilerJfrReader implements Closeable {
     private ByteBuffer buf;
     private final long fileSize;
     private long filePosition;
+    private long chunkEnd;
     private byte state;
 
     public long startNanos = Long.MAX_VALUE;
@@ -166,6 +167,27 @@ public class ProfilerJfrReader implements Closeable {
     // Similar to eof(), but parses the next chunk header
     public boolean hasMoreChunks() throws IOException {
         return state == STATE_NEW_CHUNK ? readChunk(buf.position()) : state == STATE_READING;
+    }
+
+    /** Load the next chunk's dictionaries without decoding its predecessor's sample events. */
+    public boolean nextChunk() throws IOException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedIOException("JFR parsing interrupted");
+        }
+        if (eof()) {
+            return false;
+        }
+        if (chunkEnd == fileSize) {
+            state = STATE_EOF;
+            return false;
+        }
+        if (fileSize - chunkEnd < CHUNK_HEADER_SIZE) {
+            state = STATE_INCOMPLETE;
+            return false;
+        }
+        seek(chunkEnd);
+        ensureBytes(CHUNK_HEADER_SIZE);
+        return readChunk(buf.position());
     }
 
     public List<Event> readAllEvents() throws IOException {
@@ -370,7 +392,7 @@ public class ProfilerJfrReader implements Closeable {
 
         long chunkStart = filePosition + pos;
         long chunkSize = buf.getLong(pos + 8);
-        if (chunkStart + chunkSize > fileSize) {
+        if (chunkSize > fileSize - chunkStart) {
             state = STATE_INCOMPLETE;
             return false;
         }
@@ -381,6 +403,10 @@ public class ProfilerJfrReader implements Closeable {
             state = STATE_INCOMPLETE;
             return false;
         }
+        if (chunkSize < CHUNK_HEADER_SIZE) {
+            throw new IOException("Corrupted JFR recording: invalid chunk size");
+        }
+        chunkEnd = chunkStart + chunkSize;
 
         chunkStartNanos = buf.getLong(pos + 32);
         chunkEndNanos = buf.getLong(pos + 32) + buf.getLong(pos + 40);
