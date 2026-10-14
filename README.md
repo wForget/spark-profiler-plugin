@@ -132,8 +132,9 @@ also consume memory. Explicit thread selections are validated against the select
 recording's dictionaries. Each file's samples are parsed once per flame graph request,
 resolving Java thread IDs through the current chunk's thread dictionary before
 aggregating samples. File sizes
-and seek positions use 64-bit offsets. New or updated recordings are picked up on the
-next request.
+and seek positions use 64-bit offsets. The recording file list is loaded lazily once per
+application UI store. Newly added recording paths require recreating the store; updates to
+already listed recordings are read on the next request.
 
 Flame graph requests, including streaming JSON output, are serialized per application UI store,
 so concurrent requests to that store do not build trees at the same time. Output is written through a

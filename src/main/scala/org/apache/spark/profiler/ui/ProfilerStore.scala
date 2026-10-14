@@ -43,6 +43,7 @@ private[profiler] class ProfilerStore(
     attemptId: Option[String]) extends Logging {
 
   private val appPath = new Path(directory, Utils.nameForAppAndAttempt(appId, attemptId))
+  private lazy val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))
   private val executorFile = "profile-exec-(.+)\\.jfr".r
 
   private val minFraction = conf.get(PROFILER_FLAMEGRAPH_MIN_FRACTION)
@@ -51,8 +52,7 @@ private[profiler] class ProfilerStore(
   private val parseThreads = conf.get(PROFILER_JFR_PARSE_THREADS)
 
   def listExecutors(): Seq[String] = {
-    val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))
-    recordings(fs).map(_._1).distinct
+    recordings.map(_._1).distinct
   }
 
   def resolveExecutor(filter: ExecutorProfilerFilter): ExecutorProfilerFilter = {
@@ -64,8 +64,7 @@ private[profiler] class ProfilerStore(
 
   def listThreads(executor: Option[String]): Seq[ProfilerThread] = synchronized {
     executor.toSeq.flatMap { id =>
-      val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))
-      recordings(fs).filter(_._1 == id).flatMap { case (_, path) =>
+      recordings.filter(_._1 == id).flatMap { case (_, path) =>
         JfrConvertor.listThreads(fs, path).map { case (javaThreadId, name) =>
           ProfilerThread(id, javaThreadId, name)
         }
@@ -85,7 +84,7 @@ private[profiler] class ProfilerStore(
     buffered.flush()
   }
 
-  private def recordings(fs: FileSystem): Seq[(String, Path)] = {
+  private lazy val recordings: Seq[(String, Path)] = {
     if (fs.exists(appPath)) {
       fs.listStatus(appPath).toSeq.filter(_.isFile).flatMap { status =>
         status.getPath.getName match {
@@ -102,10 +101,9 @@ private[profiler] class ProfilerStore(
   private def flamegraph(
       selection: ProfilerFilter,
       tasks: Seq[SparkProfilerTaskThreadEvent]): FlamegraphNode = {
-    val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))
     val root = FlamegraphNode("root", maxNodes, maxDepth)
     val tasksByExecutor = tasks.groupBy(_.executorId)
-    val selected = recordings(fs).filter { case (executorId, _) =>
+    val selected = recordings.filter { case (executorId, _) =>
       selection match {
         case filter: ExecutorProfilerFilter => filter.executor.forall(_ == executorId)
         case _: TaskProfilerFilter => tasksByExecutor.contains(executorId)
