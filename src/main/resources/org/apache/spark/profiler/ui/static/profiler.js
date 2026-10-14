@@ -41,7 +41,7 @@ export function initializeSelect(container) {
     label: option.dataset.label,
     detail: option.dataset.detail,
     summary: option.dataset.summary,
-    searchText: `${option.textContent} ${option.value}`.toLowerCase()
+    searchText: (option.dataset.searchText ?? `${option.textContent} ${option.value}`).toLowerCase()
   }));
 
   function renderOptions() {
@@ -271,6 +271,7 @@ function createSelect(name, label, plural, options, selected, multiple = false) 
     option.dataset.label = entry.label;
     option.dataset.detail = entry.detail || "";
     option.dataset.summary = entry.summary || "";
+    if (entry.searchText !== undefined) option.dataset.searchText = entry.searchText;
     select.append(option);
   }
   const toggle = container.querySelector("button[aria-expanded]");
@@ -445,7 +446,8 @@ export function initializeProfiler(root) {
       add("thread", "Thread", data.threads.map(t => ({
         value: t.id, label: t.name || `Java thread ${t.javaThreadId}`,
         detail: `Java thread ${t.javaThreadId} / Executor ${t.executorId}`,
-        summary: `${t.executorId}: Java thread ${t.javaThreadId}`
+        summary: `${t.executorId}: Java thread ${t.javaThreadId}`,
+        searchText: `${t.name || ""} ${t.javaThreadId}`
       })), true, "threads");
       find("hierarchy").textContent = "Executor (including driver) \u2192 Thread";
       find("help").textContent = "Thread options come from the selected executor's JFR recording. " +
