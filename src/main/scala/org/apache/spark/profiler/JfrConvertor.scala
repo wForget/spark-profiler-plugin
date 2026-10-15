@@ -22,7 +22,7 @@ import java.util.{HashMap => JHashMap, TreeMap => JTreeMap}
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
-import one.convert.{Arguments, Filter, ProfilerJfrConverter}
+import one.convert.{Arguments, ProfilerFilter => Filter, ProfilerJfrConverter}
 import one.jfr.ProfilerJfrReader
 import one.jfr.event.Event
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -46,11 +46,7 @@ private[profiler] class JfrConvertor(
 
   private val tasksByThread = tasks.filter(_.executorId == executorId).groupBy(_.javaThreadId)
 
-  override protected def collectEvents(filter: Filter): Unit = {
-    super.collectEvents(eventFilter())
-  }
-
-  private def eventFilter(): Filter = selection match {
+  override def readFilter(): Filter = selection match {
     case executor: ExecutorProfilerFilter => executorProfilerEventFilter(executor)
     case _: TaskProfilerFilter => taskProfilerEventFilter()
   }

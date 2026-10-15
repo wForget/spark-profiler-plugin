@@ -21,8 +21,10 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Parses JFR output produced by async-profiler.
@@ -65,6 +67,7 @@ public class ProfilerJfrReader implements Closeable {
     public final Dictionary<StackTrace> stackTraces = new Dictionary<>();
     public final Map<String, String> settings = new HashMap<>();
     public final Map<String, Map<Integer, String>> enums = new HashMap<>();
+    public final Set<Long> chuckThreadIds = new HashSet<>();
 
     private final Dictionary<Constructor<? extends Event>> customEvents = new Dictionary<>();
     private final Map<String, Class<? extends Event>> customEventsByName = new HashMap<>();
@@ -171,6 +174,11 @@ public class ProfilerJfrReader implements Closeable {
 
     /** Load the next chunk's dictionaries without decoding its predecessor's sample events. */
     public boolean nextChunk() throws IOException {
+        return skipChunk() && readChunk(buf.position());
+    }
+
+    /** Skip the current chunk and position the reader at the next chunk's header. */
+    public boolean skipChunk() throws IOException {
         if (Thread.currentThread().isInterrupted()) {
             throw new InterruptedIOException("JFR parsing interrupted");
         }
@@ -187,7 +195,8 @@ public class ProfilerJfrReader implements Closeable {
         }
         seek(chunkEnd);
         ensureBytes(CHUNK_HEADER_SIZE);
-        return readChunk(buf.position());
+        state = STATE_NEW_CHUNK;
+        return true;
     }
 
     public List<Event> readAllEvents() throws IOException {
@@ -420,6 +429,7 @@ public class ProfilerJfrReader implements Closeable {
 
         types.clear();
         typesByName.clear();
+        chuckThreadIds.clear();
 
         readMeta(chunkStart + metaOffset);
         readConstantPool(chunkStart + cpOffset);
@@ -550,6 +560,7 @@ public class ProfilerJfrReader implements Closeable {
             readFields(fieldCount - 4);
             threads.put(id, javaName != null ? javaName : osName);
             javaThreads.put(id, javaThreadId);
+            chuckThreadIds.add(id);
         }
     }
 

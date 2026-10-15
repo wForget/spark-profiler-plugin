@@ -37,10 +37,17 @@ public abstract class ProfilerJfrConverter extends Classifier {
     }
 
     public void convert() throws IOException {
-        Filter filter = readFilter();
+        ProfilerFilter filter = readFilter();
 
         jfr.stopAtNewChunk = true;
         while (jfr.hasMoreChunks()) {
+
+            // Skip chunks that don't contain any threads of interest, if a filter was specified
+            if (filter != null && jfr.chuckThreadIds.stream().noneMatch(tid -> filter.contains(tid))) {
+                jfr.skipChunk();
+                continue;
+            }
+
             // Reset method dictionary, since new chunk may have different IDs
             methodNames = new Dictionary<>();
 
@@ -56,7 +63,7 @@ public abstract class ProfilerJfrConverter extends Classifier {
         }
     }
 
-    protected final Filter readFilter() throws IOException {
+    protected ProfilerFilter readFilter() throws IOException {
         if (args.latency < 0 && args.tag == null) return null;
 
         Map<Integer, TreeMap<Long, Integer>> deltas = new HashMap<>();
@@ -79,14 +86,14 @@ public abstract class ProfilerJfrConverter extends Classifier {
         if (!found) {
             throw new RuntimeException("No Span/MethodTrace events found");
         }
-        return new Filter(deltas);
+        return new ProfilerFilter(deltas);
     }
 
     protected EventCollector createCollector(Arguments args) {
         return new EventAggregator(args.threads, args.grain);
     }
 
-    protected void collectEvents(Filter filter) throws IOException {
+    protected void collectEvents(ProfilerFilter filter) throws IOException {
         // args.nativemem ? MallocEvent.class should always be first for the leak detection feature
         Class<? extends Event> eventClass = args.nativemem ? MallocEvent.class
                 : args.nativelock ? NativeLockEvent.class
