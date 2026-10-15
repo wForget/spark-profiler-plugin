@@ -145,7 +145,7 @@ Configure these limits on the History Server:
 | --- | --- | --- |
 | `spark.profiler.jfr.parseThreads` | `1` | Maximum selected JFR files parsed concurrently per application UI store. Must be positive; use, for example, `4` to enable parallel parsing. |
 | `spark.profiler.flamegraph.minFraction` | `0.0001` | Merge subtrees with fewer than 0.01% of total samples into `[other]`. Valid range: 0–1; zero disables this pruning. |
-| `spark.profiler.flamegraph.maxNodes` | `100000` | Maximum retained nodes in each parser's local tree and in the merged result, including the root. Must be positive. |
+| `spark.profiler.flamegraph.maxNodes` | `2147483647` (`Integer.MAX_VALUE`) | Maximum retained nodes in each parser's local tree and in the merged result, including the root. Must be positive. |
 | `spark.profiler.flamegraph.maxDepth` | `256` | Maximum retained stack frames below the root. Must be non-negative; zero retains only the root and an `[other]` leaf. |
 
 Each parsing worker owns its reader, input stream, dictionaries and event aggregator;
