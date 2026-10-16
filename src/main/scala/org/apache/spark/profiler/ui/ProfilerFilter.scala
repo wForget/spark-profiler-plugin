@@ -57,6 +57,11 @@ private[profiler] case class ExecutorProfilerFilter(
     endTime: Option[Long] = None) extends ProfilerFilter {
   override val mode: ProfilerAnalyzeMode.Value = ProfilerAnalyzeMode.Executor
 
+  require(sampleType != ProfilerSampleType.NativeMemory ||
+    (executor.exists(_.nonEmpty) && threads.isEmpty && startTime.isEmpty && endTime.isEmpty),
+    "Native memory analysis requires one executor and its full recording; " +
+      "thread and time filters are not supported")
+
   // Request timestamps are epoch milliseconds; the JFR filter uses epoch nanoseconds.
   require((startTime.toSeq ++ endTime.toSeq).forall(t =>
     t >= 0 && t <= Long.MaxValue / 1000000L), "Time must be a valid epoch millisecond value")
@@ -71,6 +76,8 @@ private[profiler] case class TaskProfilerFilter(
     stage: Option[String] = None,
     tasks: Set[Long] = Set.empty) extends ProfilerFilter {
   override val mode: ProfilerAnalyzeMode.Value = ProfilerAnalyzeMode.Task
+  require(sampleType != ProfilerSampleType.NativeMemory,
+    "Native memory analysis is only available in executor mode")
 }
 
 private[profiler] object ProfilerFilter {

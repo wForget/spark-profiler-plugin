@@ -125,6 +125,13 @@ duplicate JFR thread IDs
 are combined. A missing recording yields no thread options. Time bounds are optional
 and default to no limit.
 
+Native memory analysis is available only for one selected executor (including the driver),
+using its entire JFR recording. Switching to Native memory clears thread and time selections
+and hides those controls; task mode does not support Native memory. The API also rejects
+native-memory requests with thread, time, or task filters, or without an executor ID.
+This ensures that releases on other threads or after a task ends remain visible to the
+allocation/free matching logic. Unmatched allocations are leak candidates, not proof of a leak.
+
 For each flame graph request, selected JFR files are read directly from the configured
 Hadoop file system through a seekable channel, without creating local copies or loading
 entire recordings into memory. The reader uses a 2 MiB input buffer, which can grow for

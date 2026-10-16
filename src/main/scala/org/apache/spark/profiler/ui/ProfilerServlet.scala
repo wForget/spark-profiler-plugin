@@ -73,7 +73,11 @@ private[profiler] class ProfilerServlet(
   private def filters(selection: ProfilerFilter): String = {
     val options: JValue = selection match {
       case filter: ExecutorProfilerFilter =>
-        val threads = store.listThreads(filter.executor)
+        val threads = if (filter.sampleType == ProfilerSampleType.NativeMemory) {
+          Seq.empty
+        } else {
+          store.listThreads(filter.executor)
+        }
         ("executors" -> store.listExecutors()) ~
           ("selectedExecutor" -> filter.executor) ~
           ("threads" -> threads.map { thread =>

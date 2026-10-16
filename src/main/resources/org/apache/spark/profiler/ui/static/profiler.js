@@ -391,11 +391,13 @@ export function initializeProfiler(root) {
     }
     const mode = params.get("mode") || "executor";
     const sampleType = params.get("sampleType") || "wall";
+    const nativeMemory = sampleType === "nativemem";
+    const showTime = mode === "executor" && !nativeMemory;
     if (!fields || fields.has("startTime") || fields.has("endTime")) {
-      find("time-help").classList.toggle("d-none", mode !== "executor");
+      find("time-help").classList.toggle("d-none", !showTime);
       for (const input of timeInputs) {
-        input.parentElement.classList.toggle("d-none", mode !== "executor");
-        input.disabled = mode !== "executor";
+        input.parentElement.classList.toggle("d-none", !showTime);
+        input.disabled = !showTime;
         const value = params.get(input.name);
         const date = value !== undefined && value !== null && value !== "" ?
           new Date(Number(value)) : null;
@@ -421,7 +423,10 @@ export function initializeProfiler(root) {
     if (!fields) {
       sampleInputs.forEach(input => {
         input.checked = input.value === sampleType;
-        input.disabled = false;
+        input.disabled = input.value === "nativemem" &&
+          (mode !== "executor" || !data.selectedExecutor);
+        input.title = input.value === "nativemem" ?
+          "Analyze a full executor recording without thread or time filters." : "";
       });
     }
     const options = find("options");
@@ -444,15 +449,22 @@ export function initializeProfiler(root) {
       if (data.selectedExecutor) params.set("executor", data.selectedExecutor);
       else params.delete("executor");
       add("executor", "Executor", data.executors.map(id => option(id)));
-      add("thread", "Thread", data.threads.map(t => ({
-        value: t.id, label: t.name || `JFR thread ${t.tid}`,
-        detail: `JFR thread ${t.tid} / Executor ${t.executorId}`,
-        summary: `${t.executorId}: JFR thread ${t.tid}`,
-        searchText: `${t.name || ""} ${t.tid}`
-      })), true, "threads");
-      find("hierarchy").textContent = "Executor (including driver) \u2192 Thread";
-      find("help").textContent = "Thread options come from the selected executor's JFR recording. " +
-        "Leave threads unselected to include all matching threads. ";
+      if (nativeMemory) {
+        find("hierarchy").textContent = "Executor (including driver)";
+        find("help").textContent = "Native memory analysis uses the selected executor's full " +
+          "recording so allocations can be matched with releases from any thread or time. " +
+          "Thread, time and task filters are unavailable.";
+      } else {
+        add("thread", "Thread", data.threads.map(t => ({
+          value: t.id, label: t.name || `JFR thread ${t.tid}`,
+          detail: `JFR thread ${t.tid} / Executor ${t.executorId}`,
+          summary: `${t.executorId}: JFR thread ${t.tid}`,
+          searchText: `${t.name || ""} ${t.tid}`
+        })), true, "threads");
+        find("hierarchy").textContent = "Executor (including driver) \u2192 Thread";
+        find("help").textContent = "Thread options come from the selected executor's JFR recording. " +
+          "Leave threads unselected to include all matching threads. ";
+      }
     } else {
       add("sqlExecution", "SQL execution", [all, ...data.sqlExecutions.map(id => option(id, `SQL ${id}`))]);
       add("job", "Job", [all, ...data.jobs.map(id => option(id, `Job ${id}`))]);
@@ -469,7 +481,9 @@ export function initializeProfiler(root) {
         "A selected parent limits the options below it. " +
         "Leave a level unselected to include all matching values. ";
     }
-    find("help").append("Selected threads or tasks contribute samples to one flame graph.");
+    if (!nativeMemory) {
+      find("help").append("Selected threads or tasks contribute samples to one flame graph.");
+    }
     const empty = find("empty");
     empty.textContent = mode === "executor" && !data.executors.length ?
       "No executor or driver JFR recordings are available." :
@@ -538,8 +552,11 @@ export function initializeProfiler(root) {
   }
 
   find("sample-type").addEventListener("change", () => {
-    if (filtersReady) cancelRequest();
-    clearGraph();
+    const params = formParams();
+    if (params.get("sampleType") === "nativemem") {
+      for (const name of ["thread", "startTime", "endTime"]) params.delete(name);
+    }
+    loadFilters(params);
   });
   form.addEventListener("change", event => {
     if (event.target.tagName !== "SELECT" || event.target.disabled) return;
@@ -577,7 +594,13 @@ export function initializeProfiler(root) {
       const params = new URLSearchParams();
       if (link.dataset.mode) {
         params.set("mode", link.dataset.mode);
-        params.set("sampleType", form.elements.namedItem("sampleType")?.value || "wall");
+        const sampleType = form.elements.namedItem("sampleType")?.value || "wall";
+        params.set("sampleType", link.dataset.mode === "task" && sampleType === "nativemem" ?
+          "wall" : sampleType);
+        if (link.dataset.mode === "executor" && sampleType === "nativemem") {
+          const executor = form.elements.namedItem("executor")?.value;
+          if (executor) params.set("executor", executor);
+        }
       }
       loadFilters(params);
     });
