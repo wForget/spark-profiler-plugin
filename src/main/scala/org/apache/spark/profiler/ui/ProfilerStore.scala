@@ -28,7 +28,8 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
-import org.apache.spark.profiler.{FlamegraphNode, JfrConvertor, PROFILER_FLAMEGRAPH_MAX_DEPTH, PROFILER_FLAMEGRAPH_MAX_NODES, PROFILER_FLAMEGRAPH_MIN_FRACTION, PROFILER_JFR_PARSE_THREADS, SparkProfilerTaskThreadEvent}
+import org.apache.spark.profiler.jfr.{FlamegraphNode, JfrConvertor}
+import org.apache.spark.profiler.{PROFILER_FLAMEGRAPH_MAX_DEPTH, PROFILER_FLAMEGRAPH_MAX_NODES, PROFILER_FLAMEGRAPH_MIN_FRACTION, PROFILER_JFR_PARSE_THREADS, SparkProfilerTaskThreadEvent}
 import org.apache.spark.util.{ThreadUtils, Utils}
 
 private[profiler] case class ProfilerThread(executorId: String, tid: Long, name: String) {

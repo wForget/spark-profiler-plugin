@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.profiler
+package org.apache.spark.profiler.jfr
 
 import java.util.{HashMap => JHashMap, TreeMap => JTreeMap}
 
@@ -27,6 +27,7 @@ import one.jfr.event.Event
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.profiler.SparkProfilerTaskThreadEvent
 import org.apache.spark.profiler.ui.{ExecutorProfilerFilter, ProfilerFilter, ProfilerSampleType, TaskProfilerFilter}
 import org.apache.spark.util.Utils
 

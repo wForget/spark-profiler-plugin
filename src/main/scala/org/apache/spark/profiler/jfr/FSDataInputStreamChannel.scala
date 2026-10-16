@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.profiler
+package org.apache.spark.profiler.jfr
 
 import java.nio.ByteBuffer
 import java.nio.channels.{ClosedChannelException, NonWritableChannelException, SeekableByteChannel}
