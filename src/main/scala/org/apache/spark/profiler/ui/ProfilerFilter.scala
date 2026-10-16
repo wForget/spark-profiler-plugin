@@ -52,7 +52,7 @@ private[profiler] sealed trait ProfilerFilter {
 private[profiler] case class ExecutorProfilerFilter(
     override val sampleType: ProfilerSampleType.Value = ProfilerSampleType.Wall,
     executor: Option[String] = None,
-    threads: Set[String] = Set.empty,
+    threads: Set[String] = Set.empty, // Each selection is executorId:JFR tid.
     startTime: Option[Long] = None,
     endTime: Option[Long] = None) extends ProfilerFilter {
   override val mode: ProfilerAnalyzeMode.Value = ProfilerAnalyzeMode.Executor

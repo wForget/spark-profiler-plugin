@@ -11,6 +11,7 @@ import one.jfr.event.*;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
@@ -43,7 +44,8 @@ public abstract class ProfilerJfrConverter extends Classifier {
         while (jfr.hasMoreChunks()) {
 
             // Skip chunks that don't contain any threads of interest, if a filter was specified
-            if (filter != null && jfr.chuckThreadIds.stream().noneMatch(tid -> filter.contains(tid))) {
+            if (filter != null && jfr.chuckThreadIds.stream()
+                    .noneMatch(tid -> filter.contains(tid, jfr.javaThreads.get(tid)))) {
                 jfr.skipChunk();
                 continue;
             }
@@ -86,7 +88,7 @@ public abstract class ProfilerJfrConverter extends Classifier {
         if (!found) {
             throw new RuntimeException("No Span/MethodTrace events found");
         }
-        return new ProfilerFilter(deltas);
+        return new ProfilerFilter(deltas, Collections.emptyMap());
     }
 
     protected EventCollector createCollector(Arguments args) {
@@ -124,7 +126,8 @@ public abstract class ProfilerJfrConverter extends Classifier {
         for (Event event; (event = jfr.readEvent(eventClass)) != null; ) {
             if (event.time >= startTicks && event.time <= endTicks) {
                 if (threadStates == null || threadStates.get(((ExecutionSample) event).threadState)) {
-                    if (filter == null || filter.matches(event.tid, jfr.eventTimeToNanos(event.time))) {
+                    if (filter == null || filter.matches(event.tid, jfr.javaThreads.get(event.tid),
+                            jfr.eventTimeToNanos(event.time))) {
                         collector.collect(event);
                     }
                 }

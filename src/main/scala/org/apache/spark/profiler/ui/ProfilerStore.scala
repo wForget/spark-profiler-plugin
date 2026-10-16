@@ -31,8 +31,8 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.profiler.{FlamegraphNode, JfrConvertor, PROFILER_FLAMEGRAPH_MAX_DEPTH, PROFILER_FLAMEGRAPH_MAX_NODES, PROFILER_FLAMEGRAPH_MIN_FRACTION, PROFILER_JFR_PARSE_THREADS, SparkProfilerTaskThreadEvent}
 import org.apache.spark.util.{ThreadUtils, Utils}
 
-private[profiler] case class ProfilerThread(executorId: String, javaThreadId: Long, name: String) {
-  def id: String = s"$executorId:$javaThreadId"
+private[profiler] case class ProfilerThread(executorId: String, tid: Long, name: String) {
+  def id: String = s"$executorId:$tid"
 }
 
 /** Reads selected recordings directly from the configured file system. */
@@ -65,8 +65,8 @@ private[profiler] class ProfilerStore(
   def listThreads(executor: Option[String]): Seq[ProfilerThread] = synchronized {
     executor.toSeq.flatMap { id =>
       recordings.filter(_._1 == id).flatMap { case (_, path) =>
-        JfrConvertor.listThreads(fs, path).map { case (javaThreadId, name) =>
-          ProfilerThread(id, javaThreadId, name)
+        JfrConvertor.listThreads(fs, path).map { case (tid, name) =>
+          ProfilerThread(id, tid, name)
         }
       }
     }

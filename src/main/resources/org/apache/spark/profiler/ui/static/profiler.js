@@ -445,10 +445,10 @@ export function initializeProfiler(root) {
       else params.delete("executor");
       add("executor", "Executor", data.executors.map(id => option(id)));
       add("thread", "Thread", data.threads.map(t => ({
-        value: t.id, label: t.name || `Java thread ${t.javaThreadId}`,
-        detail: `Java thread ${t.javaThreadId} / Executor ${t.executorId}`,
-        summary: `${t.executorId}: Java thread ${t.javaThreadId}`,
-        searchText: `${t.name || ""} ${t.javaThreadId}`
+        value: t.id, label: t.name || `JFR thread ${t.tid}`,
+        detail: `JFR thread ${t.tid} / Executor ${t.executorId}`,
+        summary: `${t.executorId}: JFR thread ${t.tid}`,
+        searchText: `${t.name || ""} ${t.tid}`
       })), true, "threads");
       find("hierarchy").textContent = "Executor (including driver) \u2192 Thread";
       find("help").textContent = "Thread options come from the selected executor's JFR recording. " +

@@ -11,21 +11,45 @@ import java.util.Map;
 import java.util.TreeMap;
 
 public final class ProfilerFilter {
-    // Per-thread timeline of open intervals, keyed by thread id
+    // Per-thread timelines, keyed by JFR thread id and Java thread id respectively.
     private final Dictionary<Intervals> intervals;
+    private final Dictionary<Intervals> javaThreadIntervals;
+    private final Intervals allThreads;
 
-    public ProfilerFilter(Map<Integer, TreeMap<Long, Integer>> deltas) {
+    public ProfilerFilter(Map<? extends Number, TreeMap<Long, Integer>> deltas,
+                          Map<Long, TreeMap<Long, Integer>> javaThreadDeltas) {
         this.intervals = new Dictionary<>(deltas.size());
-        deltas.forEach((tid, threadDeltas) -> intervals.put(tid, new Intervals(threadDeltas)));
+        deltas.forEach((tid, threadDeltas) -> intervals.put(tid.longValue(), new Intervals(threadDeltas)));
+        this.javaThreadIntervals = new Dictionary<>(javaThreadDeltas.size());
+        javaThreadDeltas.forEach((tid, threadDeltas) ->
+                javaThreadIntervals.put(tid, new Intervals(threadDeltas)));
+        this.allThreads = null;
     }
 
-    public boolean matches(int tid, long time) {
-        Intervals ins = intervals.get(tid);
-        return ins != null && ins.enclosing(time) > 0;
+    /** Apply a time range to all threads, including threads first seen in later chunks. */
+    public ProfilerFilter(long start, long end) {
+        if (end <= start) {
+            throw new IllegalArgumentException("A profiling interval must have positive duration");
+        }
+        this.intervals = new Dictionary<>();
+        this.javaThreadIntervals = new Dictionary<>();
+        this.allThreads = new Intervals(new TreeMap<>(Map.of(start, 1, end, -1)));
     }
 
-    public boolean contains(long tid) {
-        return intervals.get(tid) != null;
+    public boolean matches(int tid, Long javaThreadId, long time) {
+        return matches(allThreads, time) || matches(intervals.get(tid), time)
+                || (javaThreadId != null && javaThreadId > 0
+                    && matches(javaThreadIntervals.get(javaThreadId), time));
+    }
+
+    public boolean contains(long tid, Long javaThreadId) {
+        return allThreads != null || intervals.get(tid) != null
+                || (javaThreadId != null && javaThreadId > 0
+                    && javaThreadIntervals.get(javaThreadId) != null);
+    }
+
+    private static boolean matches(Intervals intervals, long time) {
+        return intervals != null && intervals.enclosing(time) > 0;
     }
 
     // Sort all starts and ends and count the number of open intervals (depth) at each boundary

@@ -118,9 +118,10 @@ come from recording filenames in the application's profiling directory:
 `profile-driver.jfr` supplies `driver`, and `profile-exec-<id>.jfr` supplies `<id>`.
 Only executors with matching files are listed. The default is the driver when its
 recording exists, otherwise the first available executor; no files means no options.
-Selecting an executor (including the driver) loads Java thread IDs and names from its
-JFR recording, including threads without task events. Thread dictionaries from all
-complete chunks are read without decoding sample events; duplicate Java thread IDs
+Selecting an executor (including the driver) loads JFR thread IDs (`tid`) and names from
+its JFR recording, including native-only threads and threads without task events.
+Thread dictionaries from all complete chunks are read without decoding sample events;
+duplicate JFR thread IDs
 are combined. A missing recording yields no thread options. Time bounds are optional
 and default to no limit.
 
@@ -128,10 +129,11 @@ For each flame graph request, selected JFR files are read directly from the conf
 Hadoop file system through a seekable channel, without creating local copies or loading
 entire recordings into memory. The reader uses a 2 MiB input buffer, which can grow for
 large metadata or constant-pool records; parsed dictionaries and aggregated samples
-also consume memory. Explicit thread selections are validated against the selected
-recording's dictionaries. Each file's samples are parsed once per flame graph request,
-resolving Java thread IDs through the current chunk's thread dictionary before
-aggregating samples. File sizes
+also consume memory. Executor thread selections use JFR thread IDs, while task filters use
+Java thread IDs and the full task time intervals. Filters are built once per recording;
+chunks without matching threads are skipped. Each file's samples are parsed once per
+flame graph request, resolving Java thread IDs through the current chunk's thread dictionary before
+matching task intervals and aggregating samples. File sizes
 and seek positions use 64-bit offsets. The recording file list is loaded lazily once per
 application UI store. Newly added recording paths require recreating the store; updates to
 already listed recordings are read on the next request.

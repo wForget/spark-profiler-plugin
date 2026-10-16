@@ -20,7 +20,6 @@ package org.apache.spark.profiler
 import java.util.{HashMap => JHashMap, TreeMap => JTreeMap}
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 
 import one.convert.{Arguments, ProfilerFilter => Filter, ProfilerJfrConverter}
 import one.jfr.ProfilerJfrReader
@@ -31,7 +30,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.profiler.ui.{ExecutorProfilerFilter, ProfilerFilter, ProfilerSampleType, TaskProfilerFilter}
 import org.apache.spark.util.Utils
 
-/** Resolves Java thread IDs per chunk and converts selected samples in a single pass. */
+/** Builds thread filters once and resolves sample Java thread IDs in a single pass. */
 private[profiler] class JfrConvertor(
     reader: ProfilerJfrReader,
     executorId: String,
@@ -44,8 +43,6 @@ private[profiler] class JfrConvertor(
     new Arguments(s"--${selection.sampleType}", "--norm")
   }) {
 
-  private val tasksByThread = tasks.filter(_.executorId == executorId).groupBy(_.javaThreadId)
-
   override def readFilter(): Filter = selection match {
     case executor: ExecutorProfilerFilter => executorProfilerEventFilter(executor)
     case _: TaskProfilerFilter => taskProfilerEventFilter()
@@ -53,37 +50,34 @@ private[profiler] class JfrConvertor(
 
   private def executorProfilerEventFilter(executor: ExecutorProfilerFilter): Filter = {
     if (executor.executor.exists(_ != executorId)) {
-      JfrConvertor.intervalFilter(Nil)
+      JfrConvertor.intervalFilter()
     } else if (executor.threads.isEmpty &&
         executor.startTime.isEmpty && executor.endTime.isEmpty) {
       null
     } else {
-      val intervals = new ArrayBuffer[(Int, Long, Long)]
       val start = executor.startTime.map(_ * 1000000L).getOrElse(Long.MinValue)
       val end = executor.endTime.map(_ * 1000000L).getOrElse(Long.MaxValue)
-      jfr.threads.forEach { (threadId: Long, name: String) =>
-        val javaThreadId = jfr.javaThreads.get(threadId)
-        if (executor.threads.isEmpty || (javaThreadId != null &&
-            executor.threads.contains(s"$executorId:$javaThreadId"))) {
-          intervals += ((threadId.toInt, start, end))
+      if (executor.threads.isEmpty) {
+        new Filter(start, end)
+      } else {
+        val prefix = s"$executorId:"
+        val intervals = executor.threads.toSeq.filter(_.startsWith(prefix)).map { thread =>
+          (thread.substring(prefix.length).toLong, start, end)
         }
+        JfrConvertor.intervalFilter(tidIntervals = intervals)
       }
-      JfrConvertor.intervalFilter(intervals.toSeq)
     }
   }
 
   private def taskProfilerEventFilter(): Filter = {
-    val intervals = new ArrayBuffer[(Int, Long, Long)]
     // Spark's status store has already resolved SQL/job/stage/task selections.
-    jfr.javaThreads.forEach { (threadId: Long, javaThreadId: java.lang.Long) =>
-      tasksByThread.getOrElse(javaThreadId.longValue(), Nil).foreach { task =>
-        val endMillis = if (task.endTime == task.startTime) task.endTime + 1 else task.endTime
-        val start = math.max(task.startTime * 1000000L, jfr.chunkStartNanos)
-        val end = math.min(endMillis * 1000000L, jfr.chunkEndNanos)
-        if (end > start) intervals += ((threadId.toInt, start, end))
-      }
+    val intervals = tasks.filter(_.executorId == executorId).flatMap { task =>
+      val endMillis = if (task.endTime == task.startTime) task.endTime + 1 else task.endTime
+      val start = task.startTime * 1000000L
+      val end = endMillis * 1000000L
+      Option.when(end > start)((task.javaThreadId, start, end))
     }
-    JfrConvertor.intervalFilter(intervals.toSeq)
+    JfrConvertor.intervalFilter(javaThreadIntervals = intervals)
   }
 
   override protected def convertChunk(): Unit = {
@@ -101,17 +95,14 @@ private[profiler] class JfrConvertor(
 }
 
 private[profiler] object JfrConvertor extends Logging {
-  /** Collect Java threads from every complete chunk, including threads without Spark tasks. */
+  /** Collect JFR thread IDs from every complete chunk, including native-only threads. */
   def listThreads(fs: FileSystem, path: Path): Seq[(Long, String)] = {
     withReader(fs, path) { reader =>
       val threads = mutable.Map.empty[Long, String]
       var more = true
       while (more) {
-        reader.javaThreads.forEach { (threadId: Long, javaThreadId: java.lang.Long) =>
-          // Native-only entries use Java ID zero and cannot be selected by a Java thread ID.
-          if (javaThreadId.longValue() > 0) {
-            threads(javaThreadId.longValue()) = Option(reader.threads.get(threadId)).getOrElse("")
-          }
+        reader.threads.forEach { (tid: Long, name: String) =>
+          threads(tid) = Option(name).getOrElse("")
         }
         more = reader.nextChunk()
       }
@@ -120,8 +111,16 @@ private[profiler] object JfrConvertor extends Logging {
   }
 
   /** The intervals use epoch nanoseconds, not ticks local to a particular JFR chunk. */
-  def intervalFilter(intervals: Seq[(Int, Long, Long)]): Filter = {
-    val deltas = new JHashMap[Integer, JTreeMap[java.lang.Long, Integer]]()
+  def intervalFilter(
+      tidIntervals: Seq[(Long, Long, Long)] = Nil,
+      javaThreadIntervals: Seq[(Long, Long, Long)] = Nil): Filter = {
+    new Filter(intervalDeltas(tidIntervals), intervalDeltas(javaThreadIntervals))
+  }
+
+  private def intervalDeltas(
+      intervals: Seq[(Long, Long, Long)]): JHashMap[java.lang.Long,
+        JTreeMap[java.lang.Long, Integer]] = {
+    val deltas = new JHashMap[java.lang.Long, JTreeMap[java.lang.Long, Integer]]()
     intervals.foreach { case (threadId, start, end) =>
       require(end > start, "A profiling interval must have positive duration")
       val times = deltas.computeIfAbsent(threadId, _ =>
@@ -132,7 +131,7 @@ private[profiler] object JfrConvertor extends Logging {
       add(start, 1)
       add(end, -1)
     }
-    new Filter(deltas)
+    deltas
   }
 
   def convert(

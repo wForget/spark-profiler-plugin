@@ -78,7 +78,7 @@ private[profiler] class ProfilerServlet(
           ("selectedExecutor" -> filter.executor) ~
           ("threads" -> threads.map { thread =>
             ("id" -> thread.id) ~ ("executorId" -> thread.executorId) ~
-              ("javaThreadId" -> thread.javaThreadId.toString) ~ ("name" -> thread.name)
+              ("tid" -> thread.tid.toString) ~ ("name" -> thread.name)
           })
       case filter: TaskProfilerFilter =>
         val stages = appStore.listStages(filter)
