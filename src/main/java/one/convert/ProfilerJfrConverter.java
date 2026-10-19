@@ -43,9 +43,10 @@ public abstract class ProfilerJfrConverter extends Classifier {
         jfr.stopAtNewChunk = true;
         while (jfr.hasMoreChunks()) {
 
-            // Skip chunks that don't contain any threads of interest, if a filter was specified
-            if (filter != null && jfr.chuckThreadIds.stream()
-                    .noneMatch(tid -> filter.contains(tid, jfr.javaThreads.get(tid)))) {
+            // Skip chunks outside the filter's time bounds or without any threads of interest.
+            if (filter != null && (!filter.overlaps(jfr.chunkStartNanos, jfr.chunkEndNanos)
+                    || jfr.chuckThreadIds.stream()
+                    .noneMatch(tid -> filter.contains(tid, jfr.javaThreads.get(tid))))) {
                 jfr.skipChunk();
                 continue;
             }

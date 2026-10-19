@@ -15,14 +15,16 @@ public final class ProfilerFilter {
     private final Dictionary<Intervals> intervals;
     private final Dictionary<Intervals> javaThreadIntervals;
     private final Intervals allThreads;
+    private long minTime = Long.MAX_VALUE;
+    private long maxTime = Long.MIN_VALUE;
 
     public ProfilerFilter(Map<? extends Number, TreeMap<Long, Integer>> deltas,
                           Map<Long, TreeMap<Long, Integer>> javaThreadDeltas) {
         this.intervals = new Dictionary<>(deltas.size());
-        deltas.forEach((tid, threadDeltas) -> intervals.put(tid.longValue(), new Intervals(threadDeltas)));
+        deltas.forEach((tid, threadDeltas) -> intervals.put(tid.longValue(), boundedIntervals(threadDeltas)));
         this.javaThreadIntervals = new Dictionary<>(javaThreadDeltas.size());
         javaThreadDeltas.forEach((tid, threadDeltas) ->
-                javaThreadIntervals.put(tid, new Intervals(threadDeltas)));
+                javaThreadIntervals.put(tid, boundedIntervals(threadDeltas)));
         this.allThreads = null;
     }
 
@@ -33,7 +35,21 @@ public final class ProfilerFilter {
         }
         this.intervals = new Dictionary<>();
         this.javaThreadIntervals = new Dictionary<>();
-        this.allThreads = new Intervals(new TreeMap<>(Map.of(start, 1, end, -1)));
+        this.allThreads = boundedIntervals(new TreeMap<>(Map.of(start, 1, end, -1)));
+    }
+
+    private Intervals boundedIntervals(TreeMap<Long, Integer> deltas) {
+        if (!deltas.isEmpty()) {
+            minTime = Math.min(minTime, deltas.firstKey());
+            maxTime = Math.max(maxTime, deltas.lastKey());
+        }
+        return new Intervals(deltas);
+    }
+
+    /** Conservative overlap with a chunk's epoch-nanosecond range. */
+    public boolean overlaps(long chunkStartNanos, long chunkEndNanos) {
+        // Filter intervals are [start, end); retain samples exactly at the chunk end.
+        return minTime < maxTime && chunkStartNanos < maxTime && chunkEndNanos >= minTime;
     }
 
     public boolean matches(int tid, Long javaThreadId, long time) {
