@@ -20,13 +20,15 @@ package org.apache.spark.profiler.ui
 import org.apache.spark.profiler.SparkProfilerTaskThreadEvent
 import org.apache.spark.sql.execution.ui.SQLAppStatusStore
 import org.apache.spark.status.{AppStatusStore, KVUtils}
-import org.apache.spark.status.api.v1.{JobData, StageData, TaskData}
+import org.apache.spark.status.api.v1.{JobData, StageData, StageStatus, TaskData}
 
 /** Task hierarchy metadata and task thread mappings from Spark's status store. */
 case class ProfilerAppStore(store: AppStatusStore) {
   private val sqlStatusStore = new SQLAppStatusStore(store.store)
 
-  def listExecutions(): Seq[Long] = sqlStatusStore.executionsList().map(_.executionId).sorted
+  def listExecutions(): Seq[Long] = {
+    sqlStatusStore.executionsList().filter(_.stages.nonEmpty).map(_.executionId).sorted
+  }
 
   def listJobs(executionId: Option[Long]): Seq[JobData] = {
     val jobs = executionId match {
@@ -49,7 +51,7 @@ case class ProfilerAppStore(store: AppStatusStore) {
     } else {
       store.stageList(null)
     }
-    stages.sortBy(s => (s.stageId, s.attemptId))
+    stages.filterNot(_.status == StageStatus.SKIPPED).sortBy(s => (s.stageId, s.attemptId))
   }
 
   private[profiler] def selectedStages(filter: TaskProfilerFilter): Seq[StageData] = {
