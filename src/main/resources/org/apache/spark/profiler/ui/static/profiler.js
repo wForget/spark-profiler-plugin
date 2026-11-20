@@ -15,13 +15,16 @@
  * limitations under the License.
  */
 
-/* global d3, flamegraph */
+/* global d3, flamegraph, bootstrap, jQuery */
+
+// Bootstrap 4 (Spark 3.5) dispatches jQuery events on the dropdown's parent.
+// Bootstrap 5 dispatches native events on the toggle.
+const dropdowns = new WeakMap();
 
 export function initializeSelect(container) {
   const select = container.querySelector("select");
   const find = name => container.querySelector(`.profiler-select-${name}`);
   const toggle = container.querySelector("button[aria-expanded]");
-  const dropdown = bootstrap.Dropdown.getOrCreateInstance(toggle);
   const panel = find("panel");
   const search = find("search");
   const onlySelected = find("only");
@@ -167,8 +170,19 @@ export function initializeSelect(container) {
     }
   }
 
-  toggle.addEventListener("show.bs.dropdown", renderOptions);
-  toggle.addEventListener("shown.bs.dropdown", () => search.focus());
+  let dropdown;
+  if (bootstrap.Dropdown.getOrCreateInstance) {
+    dropdown = bootstrap.Dropdown.getOrCreateInstance(toggle);
+    toggle.addEventListener("show.bs.dropdown", renderOptions);
+    toggle.addEventListener("shown.bs.dropdown", () => search.focus());
+  } else {
+    toggle.dataset.toggle = "dropdown";
+    dropdown = jQuery(toggle).dropdown().data("bs.dropdown");
+    jQuery(toggle.parentElement).on("show.bs.dropdown", renderOptions)
+      .on("shown.bs.dropdown", () => search.focus());
+    panel.addEventListener("click", event => event.stopPropagation());
+  }
+  dropdowns.set(container, dropdown);
   search.addEventListener("keydown", event => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -381,8 +395,7 @@ export function initializeProfiler(root) {
   }
 
   function disposeSelect(container) {
-    const toggle = container.querySelector("button[aria-expanded]");
-    if (toggle) bootstrap.Dropdown.getInstance(toggle)?.dispose();
+    dropdowns.get(container)?.dispose();
   }
 
   function renderFilters(data, params, fields) {
@@ -531,7 +544,7 @@ export function initializeProfiler(root) {
         }
         const container = control?.closest(".profiler-select");
         if (!container) continue;
-        bootstrap.Dropdown.getInstance(container.querySelector("button[aria-expanded]"))?.hide();
+        dropdowns.get(container)?.hide();
         container.querySelectorAll("select, button, input").forEach(control => {
           control.disabled = true;
         });

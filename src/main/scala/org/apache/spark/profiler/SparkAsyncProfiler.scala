@@ -25,14 +25,12 @@ import org.apache.hadoop.fs.permission.FsPermission
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.deploy.SparkHadoopUtil
-import org.apache.spark.internal.Logging
-import org.apache.spark.internal.LogKeys.PATH
 import org.apache.spark.util.{ThreadUtils, Utils}
 
 /**
  * A class that wraps AsyncProfiler
  */
-private[spark] class SparkAsyncProfiler(conf: SparkConf, executorId: String) extends Logging {
+private[spark] class SparkAsyncProfiler(conf: SparkConf, executorId: String) extends ProfilerLogging {
 
   private var running = false
   private val profilerOptions = conf.get(PROFILER_ASYNC_PROFILER_OPTIONS)
@@ -44,7 +42,7 @@ private[spark] class SparkAsyncProfiler(conf: SparkConf, executorId: String) ext
   private def getAppId: Option[String] = conf.getOption("spark.app.id")
   private def getAttemptId: Option[String] = conf.getOption("spark.app.attempt.id")
 
-  private val profileFile = if (SparkContext.isDriver(executorId)) {
+  private val profileFile = if (executorId == SparkContext.DRIVER_IDENTIFIER) {
     s"profile-$executorId.jfr"
   } else {
     s"profile-exec-$executorId.jfr"
@@ -152,7 +150,7 @@ private[spark] class SparkAsyncProfiler(conf: SparkConf, executorId: String) ext
         logDebug("Waiting for Spark application started")
         Thread.sleep(1000L)
       }
-      val baseName = Utils.nameForAppAndAttempt(getAppId.get, getAttemptId)
+      val baseName = SparkCompat.nameForAppAndAttempt(getAppId.get, getAttemptId)
       val profilerDirForApp = s"${profilerDfsDirOpt.get}/$baseName"
       val profileOutputFile = s"$profilerDirForApp/$profileFile"
 
@@ -167,7 +165,7 @@ private[spark] class SparkAsyncProfiler(conf: SparkConf, executorId: String) ext
         FileSystem.mkdirs(fs, profilerDirForAppPath, PROFILER_FOLDER_PERMISSIONS)
       }
 
-      logInfo(log"Copying profiling file to ${MDC(PATH, profileOutputFile)}")
+      logCopyTo(profileOutputFile)
       outputStream = FileSystem.create(fs, new Path(profileOutputFile), PROFILER_FILE_PERMISSIONS)
     }
 

@@ -16,16 +16,14 @@
  */
 package org.apache.spark.profiler
 
-import java.util.{Map => JMap}
+import java.util.{Collections, Map => JMap}
 
-import scala.jdk.CollectionConverters._
 import scala.util.Random
 import scala.util.control.NonFatal
 
 import org.apache.spark.{SparkConf, SparkContext, TaskContext, TaskFailedReason}
 import org.apache.spark.api.plugin.{DriverPlugin, ExecutorPlugin, PluginContext, SparkPlugin}
 import org.apache.spark.internal.Logging
-import org.apache.spark.internal.LogKeys.EXECUTOR_ID
 
 /**
  * Spark plugin to do profiling
@@ -58,7 +56,8 @@ class ProfilerDriverPlugin extends DriverPlugin with Logging {
       profiler.start()
     }
 
-    Map(PROFILER_EXECUTOR_TASK_THREAD_EVENT_ENABLED.key -> taskThreadEventEnabled.toString).asJava
+    Collections.singletonMap(PROFILER_EXECUTOR_TASK_THREAD_EVENT_ENABLED.key,
+      taskThreadEventEnabled.toString)
   }
 
   override def receive(message: AnyRef): AnyRef = {
@@ -79,7 +78,7 @@ class ProfilerDriverPlugin extends DriverPlugin with Logging {
   }
 }
 
-class ProfilerExecutorPlugin extends ExecutorPlugin with Logging {
+class ProfilerExecutorPlugin extends ExecutorPlugin with ProfilerLogging {
 
   private var sparkConf: SparkConf = _
   private var pluginCtx: PluginContext = _
@@ -100,13 +99,11 @@ class ProfilerExecutorPlugin extends ExecutorPlugin with Logging {
     if (executorProfilerEnabled) {
       executorProfilerFraction = sparkConf.get(PROFILER_EXECUTOR_FRACTION)
       if (rand.nextInt(100) * 0.01 < executorProfilerFraction) {
-        logInfo(log"Executor id ${MDC(EXECUTOR_ID, pluginCtx.executorID())} " +
-          log"selected for profiling")
+        logExecutorSelected(pluginCtx.executorID())
         profiler = new SparkAsyncProfiler(sparkConf, pluginCtx.executorID())
         profiler.start()
       }
     }
-    Map.empty[String, String].asJava
   }
 
   override def onTaskStart(): Unit = {

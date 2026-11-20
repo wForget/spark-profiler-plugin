@@ -19,7 +19,7 @@ package org.apache.spark.profiler.ui
 
 import scala.xml.Node
 
-import jakarta.servlet.http.HttpServletRequest
+import org.apache.spark.profiler.SparkCompat.{chartAssets, HttpServletRequest}
 
 import org.apache.spark.ui.{UIUtils, WebUIPage}
 import org.apache.spark.ui.UIUtils.prependBaseUri
@@ -93,11 +93,11 @@ private[profiler] class ProfilerPage(parent: ProfilerTab) extends WebUIPage("") 
         </div>
         <noscript>Enable JavaScript to load profiler filters and flame graphs.</noscript>
         <link rel="stylesheet" type="text/css"
-            href={prependBaseUri(request, "/static/d3-flamegraph.css")}/>
+            href={prependBaseUri(request, chartAssets + "/d3-flamegraph.css")}/>
         <link rel="stylesheet" type="text/css"
             href={prependBaseUri(request, "/static/profiler/profiler.css")}/>
-        <script src={prependBaseUri(request, "/static/d3.min.js")}></script>
-        <script src={prependBaseUri(request, "/static/d3-flamegraph.min.js")}></script>
+        <script src={prependBaseUri(request, chartAssets + "/d3.min.js")}></script>
+        <script src={prependBaseUri(request, chartAssets + "/d3-flamegraph.min.js")}></script>
         <script type="module"
             src={prependBaseUri(request, "/static/profiler/profiler.js")}></script>
       </div>

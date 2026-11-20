@@ -20,7 +20,7 @@
   <modelVersion>4.0.0</modelVersion>
   <!-- Modified from Apache Spark connector/profiler for standalone Maven builds. -->
   <groupId>io.github.wforget</groupId>
-  <artifactId>spark-profiler-plugin_2.13</artifactId>
+  <artifactId>spark-profiler-plugin_${scala.binary.version}</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -30,6 +30,9 @@
     <scala.binary.version>2.13</scala.binary.version>
     <scala.version>2.13.18</scala.version>
     <ap-loader.version>4.5-13</ap-loader.version>
+    <spark.compat>spark4</spark.compat>
+    <jetty.groupId>org.eclipse.jetty.ee10</jetty.groupId>
+    <jetty.artifactId>jetty-ee10-servlet</jetty.artifactId>
     <jetty.version>12.1.8</jetty.version>
   </properties>
   <packaging>jar</packaging>
@@ -68,8 +71,8 @@
     </dependency>
     <!-- Spark UI's Scala signatures reference Jetty types even though Spark shades them. -->
     <dependency>
-      <groupId>org.eclipse.jetty.ee10</groupId>
-      <artifactId>jetty-ee10-servlet</artifactId>
+      <groupId>${jetty.groupId}</groupId>
+      <artifactId>${jetty.artifactId}</artifactId>
       <version>${jetty.version}</version>
       <scope>provided</scope>
     </dependency>
@@ -88,6 +91,57 @@
     </dependency>
   </dependencies>
 
+  <profiles>
+    <profile>
+      <id>spark-3.5</id>
+      <properties>
+        <jetty.groupId>org.eclipse.jetty</jetty.groupId>
+        <jetty.artifactId>jetty-servlet</jetty.artifactId>
+        <jetty.version>9.4.58.v20250814</jetty.version>
+        <spark.compat>spark35</spark.compat>
+        <spark.version>3.5.9</spark.version>
+        <scala.binary.version>2.12</scala.binary.version>
+        <scala.version>2.12.18</scala.version>
+      </properties>
+      <build>
+        <!-- Spark 3.5's UI ships D3 v3 and has no flame graph renderer. -->
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-dependency-plugin</artifactId>
+            <version>3.8.1</version>
+            <executions>
+              <execution>
+                <id>bundle-profiler-chart-assets</id>
+                <phase>generate-resources</phase>
+                <goals><goal>unpack</goal></goals>
+                <configuration>
+                  <artifactItems>
+                    <artifactItem>
+                      <groupId>org.apache.spark</groupId>
+                      <artifactId>spark-core_2.13</artifactId>
+                      <version>4.2.0</version>
+                      <includes>org/apache/spark/ui/static/d3.min.js,org/apache/spark/ui/static/d3-flamegraph.*</includes>
+                      <outputDirectory>${project.build.outputDirectory}/org/apache/spark/profiler/ui/static</outputDirectory>
+                      <fileMappers>
+                        <fileMapper implementation="org.codehaus.plexus.components.io.filemappers.FlattenFileMapper"/>
+                      </fileMappers>
+                    </artifactItem>
+                  </artifactItems>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+        <resources>
+          <resource>
+            <directory>src/main/spark35/resources</directory>
+          </resource>
+        </resources>
+      </build>
+    </profile>
+  </profiles>
+
   <build>
     <resources>
       <resource>
@@ -103,6 +157,21 @@
       </resource>
     </resources>
     <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>build-helper-maven-plugin</artifactId>
+        <version>3.6.1</version>
+        <executions>
+          <execution>
+            <id>spark-version-sources</id>
+            <phase>generate-sources</phase>
+            <goals><goal>add-source</goal></goals>
+            <configuration>
+              <sources><source>src/main/${spark.compat}/scala</source></sources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-enforcer-plugin</artifactId>

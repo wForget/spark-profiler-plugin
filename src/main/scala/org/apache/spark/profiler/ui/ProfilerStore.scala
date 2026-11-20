@@ -29,8 +29,8 @@ import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
 import org.apache.spark.profiler.jfr.{FlamegraphNode, JfrConvertor}
-import org.apache.spark.profiler.{PROFILER_FLAMEGRAPH_MAX_DEPTH, PROFILER_FLAMEGRAPH_MAX_NODES, PROFILER_FLAMEGRAPH_MIN_FRACTION, PROFILER_JFR_PARSE_THREADS, SparkProfilerTaskThreadEvent}
-import org.apache.spark.util.{ThreadUtils, Utils}
+import org.apache.spark.profiler.{PROFILER_FLAMEGRAPH_MAX_DEPTH, PROFILER_FLAMEGRAPH_MAX_NODES, PROFILER_FLAMEGRAPH_MIN_FRACTION, PROFILER_JFR_PARSE_THREADS, SparkCompat, SparkProfilerTaskThreadEvent}
+import org.apache.spark.util.ThreadUtils
 
 private[profiler] case class ProfilerThread(executorId: String, tid: Long, name: String) {
   def id: String = s"$executorId:$tid"
@@ -43,7 +43,7 @@ private[profiler] class ProfilerStore(
     appId: String,
     attemptId: Option[String]) extends Logging {
 
-  private val appPath = new Path(directory, Utils.nameForAppAndAttempt(appId, attemptId))
+  private val appPath = new Path(directory, SparkCompat.nameForAppAndAttempt(appId, attemptId))
   private lazy val fs = appPath.getFileSystem(SparkHadoopUtil.get.newConfiguration(conf))
   private val executorFile = "profile-exec-(.+)\\.jfr".r
 

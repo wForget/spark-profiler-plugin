@@ -16,23 +16,22 @@ license and notices are retained in [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## Build
 
-Requires JDK 17+ and Maven 3.6.3+. The default dependencies are Spark 4.2.0 and
-Scala 2.13.18, with async-profiler loader 4.5-13 matching upstream master.
+Build with JDK 17 and Maven 3.6.3 or newer. Select the build that matches your
+cluster and History Server. Both use async-profiler loader 4.5-13 and require
+Java 17 or newer at runtime.
 
-```bash
-mvn clean verify
-```
+| Spark | Scala | Build command | Plugin JAR in `target/` |
+| --- | --- | --- | --- |
+| 3.5.9 | 2.12.18 | `mvn -Pspark-3.5 clean verify` | `spark-profiler-plugin_2.12-0.1.0-SNAPSHOT.jar` |
+| 4.2.0 (default) | 2.13.18 | `mvn clean verify` | `spark-profiler-plugin_2.13-0.1.0-SNAPSHOT.jar` |
 
-Output: `target/spark-profiler-plugin_2.13-0.1.0-SNAPSHOT.jar`.
-`verify` compiles the source code, runs the tests, and packages the JAR.
+To build against a different Spark 3.5 patch, use e.g.
+`mvn -Pspark-3.5 -Dspark.version=3.5.7 clean verify`. The plugin uses Spark
+internal APIs. Use the matching JAR with `spark-submit --jars` and place it
+alongside the loader on the History Server classpath. The 3.5 build packages the
+chart JavaScript and CSS used by the Profiler tab.
 
-Use `-Dspark.version=... -Dscala.version=...` to match your cluster versions.
-The source code uses Spark internal APIs, so rebuild and verify compatibility whenever
-you change versions. The Scala binary version is 2.13. The current upstream source
-depends on `SparkContext.isDriver` and cannot compile against Spark 4.1.x without changes.
-
-The generated JAR does not bundle dependencies. Spark and Scala are provided by the
-cluster; supply `me.bechberger:ap-loader-all:4.5-13` at runtime, for example through
+The cluster provides Spark and Scala. Supply `me.bechberger:ap-loader-all:4.5-13` at runtime, for example through
 `--packages` as shown below. If the cluster cannot access Maven repositories, add a
 previously downloaded loader JAR to `--jars` alongside the plugin JAR. Since the upstream
 class names are preserved, avoid loading another Spark profiler module JAR at the same time.
@@ -267,9 +266,12 @@ On Kubernetes, spark will try to shut down the executor pods while the profiler 
 ```
 
 ### Example
-```
+
+This example uses the Spark 3.5 build. For Spark 4.2 use the `_2.13` JAR.
+
+```bash
 ./bin/spark-submit \
-  --jars target/spark-profiler-plugin_2.13-0.1.0-SNAPSHOT.jar \
+  --jars target/spark-profiler-plugin_2.12-0.1.0-SNAPSHOT.jar \
   --packages me.bechberger:ap-loader-all:4.5-13 \
   --class <main-class> \
   --master <master-url> \

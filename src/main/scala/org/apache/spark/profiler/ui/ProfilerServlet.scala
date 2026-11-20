@@ -17,14 +17,16 @@
 
 package org.apache.spark.profiler.ui
 
+import java.net.HttpURLConnection
+
 import scala.util.control.NonFatal
 
-import jakarta.servlet.http.{HttpServlet, HttpServletRequest, HttpServletResponse}
 import org.json4s.JsonDSL._
 import org.json4s.JValue
 import org.json4s.jackson.JsonMethods.{compact, render}
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.profiler.SparkCompat.{HttpServlet, HttpServletRequest, HttpServletResponse}
 
 private[profiler] class ProfilerServlet(
     store: ProfilerStore,
@@ -46,28 +48,28 @@ private[profiler] class ProfilerServlet(
             flamegraph(filter, response)
           }
         case _ =>
-          response.setStatus(HttpServletResponse.SC_NOT_FOUND)
+          response.setStatus(HttpURLConnection.HTTP_NOT_FOUND)
           response.getWriter.print(
             compact(render(("error" -> "Unknown profiler endpoint"): JValue)))
       }
     } catch {
       case e: IllegalArgumentException if !response.isCommitted =>
         response.resetBuffer()
-        response.setStatus(HttpServletResponse.SC_BAD_REQUEST)
+        response.setStatus(HttpURLConnection.HTTP_BAD_REQUEST)
         response.getWriter.print(compact(render(("error" -> e.getMessage): JValue)))
       case NonFatal(e) =>
         logWarning("Unable to load profiler data", e)
         // A streaming response may already be on the wire. Do not append an error object to it.
         if (response.isCommitted) throw e
         response.resetBuffer()
-        response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR)
+        response.setStatus(HttpURLConnection.HTTP_INTERNAL_ERROR)
         response.getWriter.print(compact(render(("error" -> ("Unable to load profiler data. " +
           "Check the History Server logs.")): JValue)))
     }
   }
 
   override def doTrace(request: HttpServletRequest, response: HttpServletResponse): Unit = {
-    response.sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED)
+    response.sendError(HttpURLConnection.HTTP_BAD_METHOD)
   }
 
   private def filters(selection: ProfilerFilter): String = {

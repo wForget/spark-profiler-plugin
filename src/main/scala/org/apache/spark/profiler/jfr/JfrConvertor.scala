@@ -76,7 +76,7 @@ private[profiler] class JfrConvertor(
       val endMillis = if (task.endTime == task.startTime) task.endTime + 1 else task.endTime
       val start = task.startTime * 1000000L
       val end = endMillis * 1000000L
-      Option.when(end > start)((task.javaThreadId, start, end))
+      if (end > start) Some((task.javaThreadId, start, end)) else None
     }
     JfrConvertor.intervalFilter(javaThreadIntervals = intervals)
   }

@@ -17,7 +17,7 @@
 
 package org.apache.spark.profiler.ui
 
-import jakarta.servlet.http.HttpServletRequest
+import org.apache.spark.profiler.SparkCompat.HttpServletRequest
 
 private[profiler] object ProfilerAnalyzeMode extends Enumeration {
   type ProfilerAnalyzeMode = Value
