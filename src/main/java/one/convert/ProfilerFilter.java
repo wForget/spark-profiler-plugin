@@ -35,7 +35,10 @@ public final class ProfilerFilter {
         }
         this.intervals = new Dictionary<>();
         this.javaThreadIntervals = new Dictionary<>();
-        this.allThreads = boundedIntervals(new TreeMap<>(Map.of(start, 1, end, -1)));
+        TreeMap<Long, Integer> deltas = new TreeMap<>();
+        deltas.put(start, 1);
+        deltas.put(end, -1);
+        this.allThreads = boundedIntervals(deltas);
     }
 
     private Intervals boundedIntervals(TreeMap<Long, Integer> deltas) {

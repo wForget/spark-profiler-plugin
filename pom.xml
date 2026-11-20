@@ -95,6 +95,9 @@
     <profile>
       <id>spark-3.5</id>
       <properties>
+        <java.version>8</java.version>
+        <!-- The test fixture uses the build JDK's Flight Recorder API. -->
+        <maven.compiler.testRelease>17</maven.compiler.testRelease>
         <jetty.groupId>org.eclipse.jetty</jetty.groupId>
         <jetty.artifactId>jetty-servlet</jetty.artifactId>
         <jetty.version>9.4.58.v20250814</jetty.version>
@@ -212,6 +215,7 @@
         <configuration>
           <scalaVersion>${scala.version}</scalaVersion>
           <release>${java.version}</release>
+          <sendJavaToScalac>false</sendJavaToScalac>
           <args>
             <arg>-deprecation</arg>
             <arg>-feature</arg>

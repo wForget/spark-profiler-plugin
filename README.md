@@ -16,14 +16,17 @@ license and notices are retained in [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## Build
 
-Build with JDK 17 and Maven 3.6.3 or newer. Select the build that matches your
-cluster and History Server. Both use async-profiler loader 4.5-13 and require
-Java 17 or newer at runtime.
+Build with JDK 17 and Maven 3.6.3 or newer. Both profiles use async-profiler
+loader 4.5-13. Select the profile for your cluster and History Server.
 
-| Spark | Scala | Build command | Plugin JAR in `target/` |
-| --- | --- | --- | --- |
-| 3.5.9 | 2.12.18 | `mvn -Pspark-3.5 clean verify` | `spark-profiler-plugin_2.12-0.1.0-SNAPSHOT.jar` |
-| 4.2.0 (default) | 2.13.18 | `mvn clean verify` | `spark-profiler-plugin_2.13-0.1.0-SNAPSHOT.jar` |
+| Spark | Scala | Java runtime | Build command | Plugin JAR in `target/` |
+| --- | --- | --- | --- | --- |
+| 3.5.9 | 2.12.18 | 8, 11, 17 | `mvn -Pspark-3.5 clean verify` | `spark-profiler-plugin_2.12-0.1.0-SNAPSHOT.jar` |
+| 4.2.0 (default) | 2.13.18 | 17+ | `mvn clean verify` | `spark-profiler-plugin_2.13-0.1.0-SNAPSHOT.jar` |
+
+The Spark 3.5 profile targets Java 8 for all packaged classes. Spark 3.5
+deprecates Java 8 releases before 8u371. See the
+[Spark 3.5 runtime requirements](https://spark.apache.org/docs/3.5.9/).
 
 To build against a different Spark 3.5 patch, use e.g.
 `mvn -Pspark-3.5 -Dspark.version=3.5.7 clean verify`. The plugin uses Spark
