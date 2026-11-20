@@ -1,0 +1,46 @@
+name: Build Spark profiler
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Spark ${{ matrix.spark }} / Scala ${{ matrix.scala }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - spark: '3.5'
+            scala: '2.12'
+            profile: '-Pspark-3.5'
+          - spark: '4.2'
+            scala: '2.13'
+            profile: ''
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build and test
+        run: mvn --batch-mode --no-transfer-progress ${{ matrix.profile }} clean verify
+
+      - name: Upload plugin JAR
+        uses: actions/upload-artifact@v7
+        with:
+          name: spark-profiler-plugin-spark-${{ matrix.spark }}-scala-${{ matrix.scala }}
+          path: target/spark-profiler-plugin_${{ matrix.scala }}-*.jar
+          if-no-files-found: error
